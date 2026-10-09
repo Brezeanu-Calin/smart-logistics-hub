@@ -1,4 +1,4 @@
-package ro.logistics.smart_logistics.config;
+package ro.logistics.smart_logistics.shared.config;
 
 
 

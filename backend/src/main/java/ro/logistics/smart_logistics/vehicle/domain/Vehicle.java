@@ -1,4 +1,4 @@
-package ro.logistics.smart_logistics.model;
+package ro.logistics.smart_logistics.vehicle.domain;
 
 import jakarta.persistence.*;
 import lombok.*;
