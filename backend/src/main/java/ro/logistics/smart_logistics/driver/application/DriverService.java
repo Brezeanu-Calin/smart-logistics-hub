@@ -5,6 +5,8 @@ import ro.logistics.smart_logistics.driver.domain.DriverStatus;
 import ro.logistics.smart_logistics.driver.dto.DriverRequest;
 import ro.logistics.smart_logistics.driver.dto.DriverResponse;
 import ro.logistics.smart_logistics.driver.persistence.DriverRepository;
+import ro.logistics.smart_logistics.route.domain.RouteStatus;
+import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -17,9 +19,11 @@ import java.util.Locale;
 @Transactional
 public class DriverService {
     private final DriverRepository driverRepository;
+    private final RouteRepository routeRepository;
 
-    public DriverService(DriverRepository driverRepository) {
+    public DriverService(DriverRepository driverRepository, RouteRepository routeRepository) {
         this.driverRepository = driverRepository;
+        this.routeRepository = routeRepository;
     }
 
     @Transactional(readOnly = true)
@@ -42,7 +46,8 @@ public class DriverService {
     }
 
     public DriverResponse update(Long id, DriverRequest request) {
-        Driver driver = findDriver(id);
+        Driver driver = lockDriver(id);
+        ensureNotScheduled(driver);
         String email = normalizeEmail(request.email());
         ensureEmailAvailable(email, id);
         driver.updateDetails(request.name().trim(), email, request.licenseCategories());
@@ -50,12 +55,13 @@ public class DriverService {
     }
 
     public DriverResponse updateDispatcherManagedStatus(Long id, DriverStatus status) {
-        Driver driver = findDriver(id);
+        Driver driver = lockDriver(id);
         if (driver.getStatus() == DriverStatus.IN_TRANSIT) {
             throw new InvalidDriverStatusException(
                     "A driver's status cannot be changed manually while they are IN_TRANSIT on a route."
             );
         }
+        ensureNotScheduled(driver);
         try {
             driver.updateDispatcherManagedStatus(status);
         } catch (IllegalArgumentException exception) {
@@ -91,8 +97,19 @@ public class DriverService {
         }
     }
 
+    private void ensureNotScheduled(Driver driver) {
+        if (routeRepository.existsByDriver_IdAndStatusIn(
+                driver.getId(), List.of(RouteStatus.PLANNED, RouteStatus.ACTIVE))) {
+            throw new DriverScheduledException(driver.getId());
+        }
+    }
+
     private Driver findDriver(Long id) {
         return driverRepository.findById(id).orElseThrow(() -> new DriverNotFoundException(id));
+    }
+
+    private Driver lockDriver(Long id) {
+        return driverRepository.findByIdForUpdate(id).orElseThrow(() -> new DriverNotFoundException(id));
     }
 
     private static String normalizeEmail(String email) {

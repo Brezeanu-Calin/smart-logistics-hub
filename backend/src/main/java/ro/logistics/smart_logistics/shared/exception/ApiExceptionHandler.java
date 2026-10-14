@@ -2,19 +2,29 @@ package ro.logistics.smart_logistics.shared.exception;
 
 import ro.logistics.smart_logistics.driver.application.DriverInUseException;
 import ro.logistics.smart_logistics.driver.application.DriverNotFoundException;
+import ro.logistics.smart_logistics.driver.application.DriverScheduledException;
 import ro.logistics.smart_logistics.driver.application.DuplicateDriverEmailException;
 import ro.logistics.smart_logistics.driver.application.InvalidDriverStatusException;
 import ro.logistics.smart_logistics.goods.application.DuplicateGoodsTrackingCodeException;
 import ro.logistics.smart_logistics.goods.application.GoodsLockedException;
+import ro.logistics.smart_logistics.goods.application.GoodsInUseException;
 import ro.logistics.smart_logistics.goods.application.GoodsNotFoundException;
 import ro.logistics.smart_logistics.goods.application.InvalidGoodsException;
-import ro.logistics.smart_logistics.goods.application.InvalidGoodsStatusException;
 import ro.logistics.smart_logistics.goods.application.TrackingCodeGenerationException;
+import ro.logistics.smart_logistics.route.application.InvalidRouteException;
+import ro.logistics.smart_logistics.route.application.RouteConflictException;
+import ro.logistics.smart_logistics.route.application.RouteNotFoundException;
+import ro.logistics.smart_logistics.trailer.application.DuplicateTrailerLicensePlateException;
+import ro.logistics.smart_logistics.trailer.application.InvalidTrailerStatusException;
+import ro.logistics.smart_logistics.trailer.application.TrailerInUseException;
+import ro.logistics.smart_logistics.trailer.application.TrailerNotFoundException;
 import ro.logistics.smart_logistics.vehicle.application.DuplicateVehicleLicensePlateException;
 import ro.logistics.smart_logistics.vehicle.application.InvalidVehicleStatusException;
 import ro.logistics.smart_logistics.vehicle.application.VehicleInUseException;
 import ro.logistics.smart_logistics.vehicle.application.VehicleNotFoundException;
+import ro.logistics.smart_logistics.vehicle.application.VehicleScheduledException;
 
+import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -43,13 +53,29 @@ public class ApiExceptionHandler {
         return response(HttpStatus.NOT_FOUND, exception.getMessage(), Map.of());
     }
 
+    @ExceptionHandler(RouteNotFoundException.class)
+    public ResponseEntity<ApiError> handleRouteNotFound(RouteNotFoundException exception) {
+        return response(HttpStatus.NOT_FOUND, exception.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(TrailerNotFoundException.class)
+    public ResponseEntity<ApiError> handleTrailerNotFound(TrailerNotFoundException exception) {
+        return response(HttpStatus.NOT_FOUND, exception.getMessage(), Map.of());
+    }
+
     @ExceptionHandler({
             DuplicateDriverEmailException.class,
             DriverInUseException.class,
+            DriverScheduledException.class,
             DuplicateVehicleLicensePlateException.class,
             VehicleInUseException.class,
+            VehicleScheduledException.class,
             DuplicateGoodsTrackingCodeException.class,
-            GoodsLockedException.class
+            GoodsLockedException.class,
+            GoodsInUseException.class,
+            RouteConflictException.class,
+            DuplicateTrailerLicensePlateException.class,
+            TrailerInUseException.class
     })
     public ResponseEntity<ApiError> handleConflict(RuntimeException exception) {
         return response(HttpStatus.CONFLICT, exception.getMessage(), Map.of());
@@ -65,8 +91,18 @@ public class ApiExceptionHandler {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 
-    @ExceptionHandler({InvalidGoodsException.class, InvalidGoodsStatusException.class})
-    public ResponseEntity<ApiError> handleInvalidGoods(RuntimeException exception) {
+    @ExceptionHandler(InvalidTrailerStatusException.class)
+    public ResponseEntity<ApiError> handleInvalidTrailerStatus(InvalidTrailerStatusException exception) {
+        return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(InvalidRouteException.class)
+    public ResponseEntity<ApiError> handleInvalidRoute(InvalidRouteException exception) {
+        return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(InvalidGoodsException.class)
+    public ResponseEntity<ApiError> handleInvalidGoods(InvalidGoodsException exception) {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 
@@ -82,6 +118,11 @@ public class ApiExceptionHandler {
                 fields.putIfAbsent(error.getField(), error.getDefaultMessage())
         );
         return response(HttpStatus.BAD_REQUEST, "Request validation failed.", fields);
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<ApiError> handleConstraintViolation(ConstraintViolationException exception) {
+        return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 
     @ExceptionHandler(HttpMessageNotReadableException.class)

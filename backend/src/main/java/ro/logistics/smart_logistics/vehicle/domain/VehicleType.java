@@ -1,6 +1,7 @@
 package ro.logistics.smart_logistics.vehicle.domain;
 
 public enum VehicleType {
-    TRUCK,
-    VAN
+    VAN,
+    RIGID_TRUCK,
+    ARTICULATED_TRUCK
 }

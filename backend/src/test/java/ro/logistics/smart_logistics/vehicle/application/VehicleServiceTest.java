@@ -5,6 +5,7 @@ import ro.logistics.smart_logistics.vehicle.domain.VehicleStatus;
 import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
 import ro.logistics.smart_logistics.vehicle.dto.VehicleRequest;
 import ro.logistics.smart_logistics.vehicle.persistence.VehicleRepository;
+import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +26,8 @@ import static org.mockito.Mockito.when;
 class VehicleServiceTest {
     @Mock
     private VehicleRepository vehicleRepository;
+    @Mock
+    private RouteRepository routeRepository;
 
     @InjectMocks
     private VehicleService vehicleService;
@@ -38,14 +41,14 @@ class VehicleServiceTest {
         var response = vehicleService.create(request("  b 123 abc  "));
 
         assertEquals("B 123 ABC", response.licensePlate());
-        assertEquals(VehicleType.TRUCK, response.vehicleType());
+        assertEquals(VehicleType.RIGID_TRUCK, response.vehicleType());
         assertEquals(VehicleStatus.AVAILABLE, response.status());
     }
 
     @Test
     void dispatcherCannotSetInTransitManually() {
         Vehicle vehicle = vehicle();
-        when(vehicleRepository.findById(12L)).thenReturn(Optional.of(vehicle));
+        when(vehicleRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(vehicle));
 
         assertThrows(
                 InvalidVehicleStatusException.class,
@@ -59,7 +62,7 @@ class VehicleServiceTest {
     void dispatcherCannotOverrideRouteOwnedInTransitStatus() {
         Vehicle vehicle = vehicle();
         vehicle.markInTransit();
-        when(vehicleRepository.findById(12L)).thenReturn(Optional.of(vehicle));
+        when(vehicleRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(vehicle));
 
         assertThrows(
                 InvalidVehicleStatusException.class,
@@ -84,7 +87,7 @@ class VehicleServiceTest {
     private static VehicleRequest request(String licensePlate) {
         return new VehicleRequest(
                 licensePlate,
-                VehicleType.TRUCK,
+                VehicleType.RIGID_TRUCK,
                 "Volvo",
                 "FH",
                 2022,
@@ -95,6 +98,6 @@ class VehicleServiceTest {
     }
 
     private static Vehicle vehicle() {
-        return new Vehicle("B 123 ABC", VehicleType.TRUCK, "Volvo", "FH", 2022, 18000.0, 80.0, 120000);
+        return new Vehicle("B 123 ABC", VehicleType.RIGID_TRUCK, "Volvo", "FH", 2022, 18000.0, 80.0, 120000);
     }
 }

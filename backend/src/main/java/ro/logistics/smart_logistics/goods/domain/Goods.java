@@ -84,19 +84,32 @@ public class Goods {
         this.deliveryAddress = deliveryAddress;
     }
 
-    public void updateStatus(GoodsStatus status) {
-        GoodsStatus expectedNextStatus = switch (this.status) {
-            case UNASSIGNED -> GoodsStatus.ASSIGNED;
-            case ASSIGNED -> GoodsStatus.IN_TRANSIT;
-            case IN_TRANSIT -> GoodsStatus.DELIVERED;
-            case DELIVERED -> null;
-        };
-        if (status == null || status != expectedNextStatus) {
-            throw new IllegalArgumentException(
-                    "Goods status must advance one step through UNASSIGNED, ASSIGNED, IN_TRANSIT, DELIVERED."
-            );
+    public void assignToRoute() {
+        requireStatus(GoodsStatus.UNASSIGNED);
+        this.status = GoodsStatus.ASSIGNED;
+    }
+
+    public void startTransit() {
+        requireStatus(GoodsStatus.ASSIGNED);
+        this.status = GoodsStatus.IN_TRANSIT;
+    }
+
+    public void markDelivered() {
+        requireStatus(GoodsStatus.IN_TRANSIT);
+        this.status = GoodsStatus.DELIVERED;
+    }
+
+    public void releaseFromRoute() {
+        if (status != GoodsStatus.ASSIGNED && status != GoodsStatus.IN_TRANSIT) {
+            throw new IllegalStateException("Only goods assigned to an active route can be released.");
         }
-        this.status = status;
+        status = GoodsStatus.UNASSIGNED;
+    }
+
+    private void requireStatus(GoodsStatus requiredStatus) {
+        if (status != requiredStatus) {
+            throw new IllegalStateException("Goods must be " + requiredStatus + " for this route operation.");
+        }
     }
 
     public Long getId() {

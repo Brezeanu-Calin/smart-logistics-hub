@@ -3,7 +3,6 @@ package ro.logistics.smart_logistics.goods.api;
 import ro.logistics.smart_logistics.goods.application.GoodsService;
 import ro.logistics.smart_logistics.goods.dto.GoodsDTO;
 import ro.logistics.smart_logistics.goods.dto.GoodsResponse;
-import ro.logistics.smart_logistics.goods.dto.GoodsStatusRequest;
 
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -58,14 +57,6 @@ public class GoodsController {
     @PutMapping("/{id}")
     public GoodsResponse update(@PathVariable Long id, @Valid @RequestBody GoodsDTO dto) {
         return goodsService.updateGoods(id, dto);
-    }
-
-    @PatchMapping("/{id}/status")
-    public GoodsResponse updateStatus(
-            @PathVariable Long id,
-            @Valid @RequestBody GoodsStatusRequest request
-    ) {
-        return goodsService.updateDispatcherManagedStatus(id, request.status());
     }
 
     @DeleteMapping("/{id}")

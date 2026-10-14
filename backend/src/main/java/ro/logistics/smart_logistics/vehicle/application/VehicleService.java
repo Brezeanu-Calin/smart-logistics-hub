@@ -5,6 +5,8 @@ import ro.logistics.smart_logistics.vehicle.domain.VehicleStatus;
 import ro.logistics.smart_logistics.vehicle.dto.VehicleRequest;
 import ro.logistics.smart_logistics.vehicle.dto.VehicleResponse;
 import ro.logistics.smart_logistics.vehicle.persistence.VehicleRepository;
+import ro.logistics.smart_logistics.route.domain.RouteStatus;
+import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -17,9 +19,11 @@ import java.util.Locale;
 @Transactional
 public class VehicleService {
     private final VehicleRepository vehicleRepository;
+    private final RouteRepository routeRepository;
 
-    public VehicleService(VehicleRepository vehicleRepository) {
+    public VehicleService(VehicleRepository vehicleRepository, RouteRepository routeRepository) {
         this.vehicleRepository = vehicleRepository;
+        this.routeRepository = routeRepository;
     }
 
     @Transactional(readOnly = true)
@@ -51,7 +55,8 @@ public class VehicleService {
     }
 
     public VehicleResponse update(Long id, VehicleRequest request) {
-        Vehicle vehicle = findVehicle(id);
+        Vehicle vehicle = lockVehicle(id);
+        ensureNotScheduled(vehicle);
         String licensePlate = normalizeLicensePlate(request.licensePlate());
         ensureLicensePlateAvailable(licensePlate, id);
         vehicle.updateDetails(
@@ -68,12 +73,13 @@ public class VehicleService {
     }
 
     public VehicleResponse updateDispatcherManagedStatus(Long id, VehicleStatus status) {
-        Vehicle vehicle = findVehicle(id);
+        Vehicle vehicle = lockVehicle(id);
         if (vehicle.getStatus() == VehicleStatus.IN_TRANSIT) {
             throw new InvalidVehicleStatusException(
                     "A vehicle's status cannot be changed manually while it is IN_TRANSIT on a route."
             );
         }
+        ensureNotScheduled(vehicle);
         try {
             vehicle.updateDispatcherManagedStatus(status);
         } catch (IllegalArgumentException exception) {
@@ -109,8 +115,19 @@ public class VehicleService {
         }
     }
 
+    private void ensureNotScheduled(Vehicle vehicle) {
+        if (routeRepository.existsByVehicle_IdAndStatusIn(
+                vehicle.getId(), List.of(RouteStatus.PLANNED, RouteStatus.ACTIVE))) {
+            throw new VehicleScheduledException(vehicle.getId());
+        }
+    }
+
     private Vehicle findVehicle(Long id) {
         return vehicleRepository.findById(id).orElseThrow(() -> new VehicleNotFoundException(id));
+    }
+
+    private Vehicle lockVehicle(Long id) {
+        return vehicleRepository.findByIdForUpdate(id).orElseThrow(() -> new VehicleNotFoundException(id));
     }
 
     private static String normalizeLicensePlate(String licensePlate) {

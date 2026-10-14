@@ -5,6 +5,7 @@ import ro.logistics.smart_logistics.goods.domain.GoodsStatus;
 import ro.logistics.smart_logistics.goods.dto.GoodsDTO;
 import ro.logistics.smart_logistics.goods.dto.GoodsResponse;
 import ro.logistics.smart_logistics.goods.persistence.GoodsRepository;
+import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -21,9 +22,11 @@ public class GoodsService {
     private static final int TRACKING_CODE_ATTEMPTS = 100;
 
     private final GoodsRepository goodsRepository;
+    private final RouteRepository routeRepository;
 
-    public GoodsService(GoodsRepository goodsRepository) {
+    public GoodsService(GoodsRepository goodsRepository, RouteRepository routeRepository) {
         this.goodsRepository = goodsRepository;
+        this.routeRepository = routeRepository;
     }
 
     @Transactional(readOnly = true)
@@ -62,7 +65,7 @@ public class GoodsService {
 
     public GoodsResponse updateGoods(Long id, GoodsDTO dto) {
         validate(dto);
-        Goods goods = findGoods(id);
+        Goods goods = lockGoods(id);
         ensureEditable(goods);
         goods.updateDetails(
                 normalize(dto.clientName()),
@@ -89,19 +92,12 @@ public class GoodsService {
         ));
     }
 
-    public GoodsResponse updateDispatcherManagedStatus(Long id, GoodsStatus status) {
-        Goods goods = findGoods(id);
-        try {
-            goods.updateStatus(status);
-        } catch (IllegalArgumentException exception) {
-            throw new InvalidGoodsStatusException(exception.getMessage());
-        }
-        return save(goods);
-    }
-
     public void delete(Long id) {
-        Goods goods = findGoods(id);
+        Goods goods = lockGoods(id);
         ensureEditable(goods);
+        if (routeRepository.existsByStops_Goods_Id(id)) {
+            throw new GoodsInUseException(id);
+        }
         goodsRepository.delete(goods);
     }
 
@@ -177,6 +173,10 @@ public class GoodsService {
 
     private Goods findGoods(Long id) {
         return goodsRepository.findById(id).orElseThrow(() -> new GoodsNotFoundException(id));
+    }
+
+    private Goods lockGoods(Long id) {
+        return goodsRepository.findByIdForUpdate(id).orElseThrow(() -> new GoodsNotFoundException(id));
     }
 
     private void ensureEditable(Goods goods) {

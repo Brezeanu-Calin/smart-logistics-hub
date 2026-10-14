@@ -5,6 +5,7 @@ import ro.logistics.smart_logistics.goods.domain.GoodsStatus;
 import ro.logistics.smart_logistics.goods.domain.GoodsType;
 import ro.logistics.smart_logistics.goods.dto.GoodsDTO;
 import ro.logistics.smart_logistics.goods.persistence.GoodsRepository;
+import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +32,8 @@ import static org.mockito.Mockito.when;
 class GoodsServiceTest {
     @Mock
     private GoodsRepository goodsRepository;
+    @Mock
+    private RouteRepository routeRepository;
 
     @InjectMocks
     private GoodsService goodsService;
@@ -51,7 +54,7 @@ class GoodsServiceTest {
     @Test
     void duplicateGoodsGeneratesFreshCodeAndResetsStatus() {
         Goods original = goods();
-        original.updateStatus(GoodsStatus.ASSIGNED);
+        original.assignToRoute();
         when(goodsRepository.findById(12L)).thenReturn(Optional.of(original));
         when(goodsRepository.existsByTrackingCode(anyString()))
                 .thenAnswer(invocation -> original.getTrackingCode().equals(invocation.getArgument(0)));
@@ -68,8 +71,8 @@ class GoodsServiceTest {
     @Test
     void updateAndDeleteAreBlockedForAssignedGoods() {
         Goods assigned = goods();
-        assigned.updateStatus(GoodsStatus.ASSIGNED);
-        when(goodsRepository.findById(12L)).thenReturn(Optional.of(assigned));
+        assigned.assignToRoute();
+        when(goodsRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(assigned));
 
         assertThrows(GoodsLockedException.class, () -> goodsService.updateGoods(12L, dto("Cluj", "Bucharest")));
         assertThrows(GoodsLockedException.class, () -> goodsService.delete(12L));
@@ -81,9 +84,9 @@ class GoodsServiceTest {
     @Test
     void updateAndDeleteAreBlockedForInTransitGoods() {
         Goods inTransit = goods();
-        inTransit.updateStatus(GoodsStatus.ASSIGNED);
-        inTransit.updateStatus(GoodsStatus.IN_TRANSIT);
-        when(goodsRepository.findById(12L)).thenReturn(Optional.of(inTransit));
+        inTransit.assignToRoute();
+        inTransit.startTransit();
+        when(goodsRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(inTransit));
 
         assertThrows(GoodsLockedException.class, () -> goodsService.updateGoods(12L, dto("Cluj", "Bucharest")));
         assertThrows(GoodsLockedException.class, () -> goodsService.delete(12L));
@@ -93,35 +96,16 @@ class GoodsServiceTest {
     }
 
     @Test
-    void statusMustAdvanceOneStepAtATime() {
+    void routeLifecycleAdvancesGoodsStatus() {
         Goods goods = goods();
-        when(goodsRepository.findById(12L)).thenReturn(Optional.of(goods));
-
-        assertThrows(
-                InvalidGoodsStatusException.class,
-                () -> goodsService.updateDispatcherManagedStatus(12L, GoodsStatus.IN_TRANSIT)
-        );
-        verify(goodsRepository, never()).save(any(Goods.class));
-    }
-
-    @Test
-    void dispatcherCanAdvanceStatusOneStepAtATime() {
-        Goods goods = goods();
-        when(goodsRepository.findById(12L)).thenReturn(Optional.of(goods));
-        when(goodsRepository.saveAndFlush(any(Goods.class)))
-                .thenAnswer(invocation -> invocation.getArgument(0));
-
-        assertEquals(
-                GoodsStatus.ASSIGNED,
-                goodsService.updateDispatcherManagedStatus(12L, GoodsStatus.ASSIGNED).status()
-        );
-        assertEquals(
-                GoodsStatus.IN_TRANSIT,
-                goodsService.updateDispatcherManagedStatus(12L, GoodsStatus.IN_TRANSIT).status()
-        );
+        goods.assignToRoute();
+        assertEquals(GoodsStatus.ASSIGNED, goods.getStatus());
+        goods.startTransit();
+        assertEquals(GoodsStatus.IN_TRANSIT, goods.getStatus());
+        goods.markDelivered();
         assertEquals(
                 GoodsStatus.DELIVERED,
-                goodsService.updateDispatcherManagedStatus(12L, GoodsStatus.DELIVERED).status()
+                goods.getStatus()
         );
     }
 

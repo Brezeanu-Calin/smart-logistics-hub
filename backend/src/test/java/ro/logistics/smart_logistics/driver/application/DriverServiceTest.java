@@ -5,6 +5,7 @@ import ro.logistics.smart_logistics.driver.domain.DriverStatus;
 import ro.logistics.smart_logistics.driver.domain.LicenseCategory;
 import ro.logistics.smart_logistics.driver.dto.DriverRequest;
 import ro.logistics.smart_logistics.driver.persistence.DriverRepository;
+import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,6 +27,8 @@ import static org.mockito.Mockito.when;
 class DriverServiceTest {
     @Mock
     private DriverRepository driverRepository;
+    @Mock
+    private RouteRepository routeRepository;
 
     @InjectMocks
     private DriverService driverService;
@@ -51,7 +54,7 @@ class DriverServiceTest {
     @Test
     void dispatcherCannotSetInTransitManually() {
         Driver driver = new Driver("Alex Driver", "driver@example.com", Set.of(LicenseCategory.B));
-        when(driverRepository.findById(7L)).thenReturn(Optional.of(driver));
+        when(driverRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(driver));
 
         assertThrows(
                 InvalidDriverStatusException.class,
@@ -65,7 +68,7 @@ class DriverServiceTest {
     void dispatcherCannotOverrideRouteOwnedInTransitStatus() {
         Driver driver = new Driver("Alex Driver", "driver@example.com", Set.of(LicenseCategory.B));
         driver.markInTransit();
-        when(driverRepository.findById(7L)).thenReturn(Optional.of(driver));
+        when(driverRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(driver));
 
         assertThrows(
                 InvalidDriverStatusException.class,

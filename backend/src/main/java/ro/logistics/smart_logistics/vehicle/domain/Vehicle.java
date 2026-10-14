@@ -28,7 +28,7 @@ public class Vehicle {
     private String licensePlate;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "vehicle_type", nullable = false, length = 10)
+    @Column(name = "vehicle_type", nullable = false, length = 30)
     private VehicleType vehicleType;
 
     @Column(nullable = false, length = 100)
@@ -116,6 +116,10 @@ public class Vehicle {
 
     public void markAvailable() {
         this.status = VehicleStatus.AVAILABLE;
+    }
+
+    public void markMaintenance() {
+        this.status = VehicleStatus.MAINTENANCE;
     }
 
     public Long getId() {
