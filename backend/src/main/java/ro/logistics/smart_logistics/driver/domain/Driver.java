@@ -77,14 +77,18 @@ public class Driver {
     }
 
     public void updateDispatcherManagedStatus(DriverStatus status) {
-        if (status == DriverStatus.IN_TRANSIT) {
-            throw new IllegalArgumentException("IN_TRANSIT is managed by route assignment.");
+        if (status == DriverStatus.IN_TRANSIT || status == DriverStatus.RETURNING) {
+            throw new IllegalArgumentException(status + " is managed by route lifecycle.");
         }
         this.status = status;
     }
 
     public void markInTransit() {
         this.status = DriverStatus.IN_TRANSIT;
+    }
+
+    public void markReturning() {
+        this.status = DriverStatus.RETURNING;
     }
 
     public void markAvailable() {

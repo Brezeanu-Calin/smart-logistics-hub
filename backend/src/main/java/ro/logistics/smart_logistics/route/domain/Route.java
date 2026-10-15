@@ -49,6 +49,21 @@ public class Route {
     @Column(name = "estimated_arrival_time", nullable = false, columnDefinition = "datetimeoffset")
     private OffsetDateTime estimatedArrivalTime;
 
+    @Column(name = "estimated_return_time", columnDefinition = "datetimeoffset")
+    private OffsetDateTime estimatedReturnTime;
+
+    @Column(name = "returned_at", columnDefinition = "datetimeoffset")
+    private OffsetDateTime returnedAt;
+
+    @Column(name = "distance_meters", nullable = false)
+    private Long distanceMeters;
+
+    @Column(name = "driving_duration_seconds", nullable = false)
+    private Long drivingDurationSeconds;
+
+    @Column(name = "return_duration_seconds", nullable = false)
+    private Long returnDurationSeconds;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private RouteStatus status = RouteStatus.PLANNED;
@@ -65,13 +80,20 @@ public class Route {
             Vehicle vehicle,
             Trailer trailer,
             OffsetDateTime departureTime,
-            OffsetDateTime estimatedArrivalTime
+            OffsetDateTime estimatedArrivalTime,
+            Long distanceMeters,
+            Long drivingDurationSeconds,
+            Long returnDurationSeconds
     ) {
         this.driver = driver;
         this.vehicle = vehicle;
         this.trailer = trailer;
         this.departureTime = departureTime;
         this.estimatedArrivalTime = estimatedArrivalTime;
+        this.estimatedReturnTime = estimatedArrivalTime;
+        this.distanceMeters = distanceMeters;
+        this.drivingDurationSeconds = drivingDurationSeconds;
+        this.returnDurationSeconds = returnDurationSeconds;
     }
 
     public void addStop(RouteStop stop) {
@@ -87,6 +109,21 @@ public class Route {
     public void complete() {
         requireStatus(RouteStatus.ACTIVE);
         status = RouteStatus.COMPLETED;
+    }
+
+    public void setEstimatedReturnTime(OffsetDateTime estimatedReturnTime) {
+        this.estimatedReturnTime = estimatedReturnTime;
+    }
+
+    public void clearEstimatedReturnTime() {
+        this.estimatedReturnTime = null;
+    }
+
+    public void markReturned(OffsetDateTime returnedAt) {
+        if (estimatedReturnTime == null || this.returnedAt != null) {
+            throw new IllegalStateException("This route has no pending return.");
+        }
+        this.returnedAt = returnedAt;
     }
 
     public void cancel() {
@@ -124,6 +161,26 @@ public class Route {
 
     public OffsetDateTime getEstimatedArrivalTime() {
         return estimatedArrivalTime;
+    }
+
+    public OffsetDateTime getEstimatedReturnTime() {
+        return estimatedReturnTime;
+    }
+
+    public OffsetDateTime getReturnedAt() {
+        return returnedAt;
+    }
+
+    public Long getDistanceMeters() {
+        return distanceMeters;
+    }
+
+    public Long getDrivingDurationSeconds() {
+        return drivingDurationSeconds;
+    }
+
+    public Long getReturnDurationSeconds() {
+        return returnDurationSeconds;
     }
 
     public RouteStatus getStatus() {

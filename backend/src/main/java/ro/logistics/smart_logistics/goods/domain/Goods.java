@@ -106,6 +106,11 @@ public class Goods {
         status = GoodsStatus.UNASSIGNED;
     }
 
+    public void archive() {
+        requireStatus(GoodsStatus.DELIVERED);
+        status = GoodsStatus.ARCHIVED;
+    }
+
     private void requireStatus(GoodsStatus requiredStatus) {
         if (status != requiredStatus) {
             throw new IllegalStateException("Goods must be " + requiredStatus + " for this route operation.");

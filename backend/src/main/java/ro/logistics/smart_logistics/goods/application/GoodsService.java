@@ -180,7 +180,7 @@ public class GoodsService {
     }
 
     private void ensureEditable(Goods goods) {
-        if (goods.getStatus() == GoodsStatus.ASSIGNED || goods.getStatus() == GoodsStatus.IN_TRANSIT) {
+        if (goods.getStatus() != GoodsStatus.UNASSIGNED) {
             throw new GoodsLockedException(goods.getId());
         }
     }

@@ -33,6 +33,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.lang.reflect.Field;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -62,6 +63,8 @@ class RouteServiceTest {
     private GoodsRepository goodsRepository;
     @Mock
     private EntityManager entityManager;
+    @Mock
+    private RouteDirectionsService directionsService;
 
     @InjectMocks
     private RouteService routeService;
@@ -145,7 +148,6 @@ class RouteServiceTest {
                 1L,
                 2L,
                 OffsetDateTime.parse("2026-10-15T08:00:00Z"),
-                OffsetDateTime.parse("2026-10-15T14:00:00Z"),
                 List.of(
                         new RouteStopRequest(3L, RouteStopType.DELIVERY),
                         new RouteStopRequest(3L, RouteStopType.PICKUP)
@@ -167,6 +169,8 @@ class RouteServiceTest {
         when(driverRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(driver));
         when(vehicleRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(vehicle));
         when(goodsRepository.findAllByIdForUpdate(List.of(3L))).thenReturn(List.of(goods));
+        when(directionsService.estimate(anyList()))
+                .thenReturn(new RouteTravelEstimate(120_000, Duration.ofHours(6), Duration.ofHours(1)));
         when(routeRepository.existsDriverScheduleOverlap(
                 eq(1L), anyList(), any(OffsetDateTime.class), any(OffsetDateTime.class)
         )).thenReturn(true);
@@ -203,7 +207,7 @@ class RouteServiceTest {
     }
 
     @Test
-    void cancellingActiveRouteReleasesUndeliveredGoodsButKeepsDeliveredGoods() throws Exception {
+    void cancellingActiveRouteReleasesUndeliveredGoodsAndKeepsResourcesReturning() throws Exception {
         Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.B));
         setId(driver, 1L);
         driver.markInTransit();
@@ -234,8 +238,9 @@ class RouteServiceTest {
         assertEquals(RouteStatus.CANCELLED, route.getStatus());
         assertEquals(GoodsStatus.DELIVERED, delivered.getStatus());
         assertEquals(GoodsStatus.UNASSIGNED, undelivered.getStatus());
-        assertEquals(DriverStatus.AVAILABLE, driver.getStatus());
-        assertEquals(VehicleStatus.AVAILABLE, vehicle.getStatus());
+        assertEquals(DriverStatus.RETURNING, driver.getStatus());
+        assertEquals(VehicleStatus.IN_TRANSIT, vehicle.getStatus());
+        org.junit.jupiter.api.Assertions.assertNotNull(route.getEstimatedReturnTime());
     }
 
     @Test
@@ -265,7 +270,7 @@ class RouteServiceTest {
     }
 
     @Test
-    void completingDeliveredRouteReturnsResourcesToAvailable() throws Exception {
+    void completingDeliveredRouteArchivesGoodsAndKeepsResourcesReturning() throws Exception {
         Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.B));
         setId(driver, 1L);
         driver.markInTransit();
@@ -289,14 +294,128 @@ class RouteServiceTest {
         routeService.updateStatus(8L, new RouteStatusRequest(RouteStatus.COMPLETED));
 
         assertEquals(RouteStatus.COMPLETED, route.getStatus());
+        assertEquals(DriverStatus.RETURNING, driver.getStatus());
+        assertEquals(VehicleStatus.IN_TRANSIT, vehicle.getStatus());
+        assertEquals(GoodsStatus.ARCHIVED, goods.getStatus());
+        assertEquals(3600L, route.getReturnDurationSeconds());
+        org.junit.jupiter.api.Assertions.assertNotNull(route.getEstimatedReturnTime());
+    }
+
+    @Test
+    void confirmingFinalDeliveryCompletesRouteAndStartsReturnAutomatically() throws Exception {
+        Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.B));
+        setId(driver, 1L);
+        driver.markInTransit();
+        Vehicle vehicle = new Vehicle("VAN-1", VehicleType.VAN, "Make", "Model", 2022, 5000.0, 20.0, 1000);
+        setId(vehicle, 2L);
+        vehicle.markInTransit();
+        Goods goods = goods(3L, 4000.0, 10.0);
+        goods.assignToRoute();
+        goods.startTransit();
+        Route route = route(driver, vehicle, goods, RouteStatus.ACTIVE);
+        setId(route, 8L);
+        when(routeRepository.findById(8L)).thenReturn(Optional.of(route));
+        when(routeRepository.findByIdForUpdate(8L)).thenReturn(Optional.of(route));
+        when(driverRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(driver));
+        when(vehicleRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(vehicle));
+        when(goodsRepository.findAllByIdForUpdate(List.of(3L))).thenReturn(List.of(goods));
+        when(routeRepository.saveAndFlush(any(Route.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = routeService.markGoodsDelivered(8L, 3L);
+
+        assertEquals(RouteStatus.COMPLETED, response.status());
+        assertEquals(DriverStatus.RETURNING, driver.getStatus());
+        assertEquals(VehicleStatus.IN_TRANSIT, vehicle.getStatus());
+        assertEquals(GoodsStatus.ARCHIVED, goods.getStatus());
+    }
+
+    @Test
+    void releasesResourcesAfterEstimatedDepotReturn() throws Exception {
+        Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.B));
+        setId(driver, 1L);
+        driver.markReturning();
+        Vehicle vehicle = new Vehicle("VAN-1", VehicleType.VAN, "Make", "Model", 2022, 5000.0, 20.0, 1000);
+        setId(vehicle, 2L);
+        vehicle.markInTransit();
+        Goods goods = goods(3L, 4000.0, 10.0);
+        goods.assignToRoute();
+        goods.startTransit();
+        goods.markDelivered();
+        goods.archive();
+        Route route = route(driver, vehicle, goods, RouteStatus.ACTIVE);
+        route.complete();
+        route.setEstimatedReturnTime(OffsetDateTime.now().minusMinutes(1));
+        setId(route, 8L);
+        when(routeRepository.findAllByStatusInAndEstimatedReturnTimeLessThanEqualAndReturnedAtIsNull(
+                anyList(), any(OffsetDateTime.class)
+        )).thenReturn(List.of(route));
+        when(driverRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(driver));
+        when(vehicleRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(vehicle));
+
+        assertEquals(1, routeService.releaseDueReturns());
+
         assertEquals(DriverStatus.AVAILABLE, driver.getStatus());
         assertEquals(VehicleStatus.AVAILABLE, vehicle.getStatus());
+        org.junit.jupiter.api.Assertions.assertNotNull(route.getReturnedAt());
+    }
+
+    @Test
+    void deletingPlannedRouteReleasesGoods() throws Exception {
+        Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.B));
+        setId(driver, 1L);
+        Vehicle vehicle = new Vehicle("VAN-1", VehicleType.VAN, "Make", "Model", 2022, 5000.0, 20.0, 1000);
+        setId(vehicle, 2L);
+        Goods goods = goods(3L, 4000.0, 10.0);
+        goods.assignToRoute();
+        Route route = route(driver, vehicle, goods, RouteStatus.PLANNED);
+        setId(route, 8L);
+        when(routeRepository.findById(8L)).thenReturn(Optional.of(route));
+        when(routeRepository.findByIdForUpdate(8L)).thenReturn(Optional.of(route));
+        when(driverRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(driver));
+        when(vehicleRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(vehicle));
+        when(goodsRepository.findAllByIdForUpdate(List.of(3L))).thenReturn(List.of(goods));
+
+        routeService.delete(8L);
+
+        assertEquals(GoodsStatus.UNASSIGNED, goods.getStatus());
+        verify(routeRepository).delete(route);
+        verify(routeRepository).flush();
+    }
+
+    @Test
+    void rejectsDeliveryConfirmationOutOfPlannedOrder() throws Exception {
+        Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.B));
+        setId(driver, 1L);
+        Vehicle vehicle = new Vehicle("VAN-1", VehicleType.VAN, "Make", "Model", 2022, 5000.0, 20.0, 1000);
+        setId(vehicle, 2L);
+        Goods first = goods(3L, 1000.0, 2.0);
+        Goods second = goods(4L, 1000.0, 2.0);
+        for (Goods item : List.of(first, second)) {
+            item.assignToRoute();
+            item.startTransit();
+        }
+        Route route = route(driver, vehicle, first, RouteStatus.ACTIVE);
+        route.addStop(new RouteStop(second, RouteStopType.PICKUP, 3));
+        route.addStop(new RouteStop(second, RouteStopType.DELIVERY, 4));
+        setId(route, 8L);
+        when(routeRepository.findById(8L)).thenReturn(Optional.of(route));
+        when(routeRepository.findByIdForUpdate(8L)).thenReturn(Optional.of(route));
+        when(driverRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(driver));
+        when(vehicleRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(vehicle));
+        when(goodsRepository.findAllByIdForUpdate(List.of(3L, 4L))).thenReturn(List.of(first, second));
+
+        assertThrows(RouteConflictException.class, () -> routeService.markGoodsDelivered(8L, 4L));
+
+        assertEquals(GoodsStatus.IN_TRANSIT, second.getStatus());
     }
 
     private void prepareBasicCreate(Driver driver, Vehicle vehicle, Goods goods) {
         when(driverRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
         when(vehicleRepository.findByIdForUpdate(vehicle.getId())).thenReturn(Optional.of(vehicle));
         when(goodsRepository.findAllByIdForUpdate(List.of(goods.getId()))).thenReturn(List.of(goods));
+        when(directionsService.estimate(anyList()))
+                .thenReturn(new RouteTravelEstimate(120_000, Duration.ofHours(6), Duration.ofHours(1)));
         when(routeRepository.existsDriverScheduleOverlap(
                 eq(driver.getId()), anyList(), any(OffsetDateTime.class), any(OffsetDateTime.class)
         )).thenReturn(false);
@@ -312,7 +431,6 @@ class RouteServiceTest {
                 driverId,
                 vehicleId,
                 OffsetDateTime.parse("2026-10-15T08:00:00Z"),
-                OffsetDateTime.parse("2026-10-15T14:00:00Z"),
                 List.of(
                         new RouteStopRequest(goodsId, RouteStopType.PICKUP),
                         new RouteStopRequest(goodsId, RouteStopType.DELIVERY)
@@ -341,7 +459,10 @@ class RouteServiceTest {
                 vehicle,
                 null,
                 OffsetDateTime.parse("2026-10-15T08:00:00Z"),
-                OffsetDateTime.parse("2026-10-15T14:00:00Z")
+                OffsetDateTime.parse("2026-10-15T14:00:00Z"),
+                120_000L,
+                21_600L,
+                3_600L
         );
         route.addStop(new RouteStop(goods, RouteStopType.PICKUP, 1));
         route.addStop(new RouteStop(goods, RouteStopType.DELIVERY, 2));

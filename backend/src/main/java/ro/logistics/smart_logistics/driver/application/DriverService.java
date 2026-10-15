@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Locale;
+import java.time.OffsetDateTime;
 
 @Service
 @Transactional
@@ -56,9 +57,9 @@ public class DriverService {
 
     public DriverResponse updateDispatcherManagedStatus(Long id, DriverStatus status) {
         Driver driver = lockDriver(id);
-        if (driver.getStatus() == DriverStatus.IN_TRANSIT) {
+        if (driver.getStatus() == DriverStatus.IN_TRANSIT || driver.getStatus() == DriverStatus.RETURNING) {
             throw new InvalidDriverStatusException(
-                    "A driver's status cannot be changed manually while they are IN_TRANSIT on a route."
+                    "A driver's status cannot be changed manually while they are IN_TRANSIT or RETURNING."
             );
         }
         ensureNotScheduled(driver);
@@ -99,7 +100,11 @@ public class DriverService {
 
     private void ensureNotScheduled(Driver driver) {
         if (routeRepository.existsByDriver_IdAndStatusIn(
-                driver.getId(), List.of(RouteStatus.PLANNED, RouteStatus.ACTIVE))) {
+                driver.getId(), List.of(RouteStatus.PLANNED, RouteStatus.ACTIVE))
+                || driver.getStatus() == DriverStatus.IN_TRANSIT
+                || driver.getStatus() == DriverStatus.RETURNING
+                || routeRepository.existsByDriver_IdAndStatusInAndEstimatedReturnTimeAfter(
+                driver.getId(), List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), OffsetDateTime.now())) {
             throw new DriverScheduledException(driver.getId());
         }
     }

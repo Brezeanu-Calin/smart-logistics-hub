@@ -56,6 +56,7 @@ public class RouteService {
     private final TrailerRepository trailerRepository;
     private final GoodsRepository goodsRepository;
     private final EntityManager entityManager;
+    private final RouteDirectionsService directionsService;
 
     public RouteService(
             RouteRepository routeRepository,
@@ -63,7 +64,8 @@ public class RouteService {
             VehicleRepository vehicleRepository,
             TrailerRepository trailerRepository,
             GoodsRepository goodsRepository,
-            EntityManager entityManager
+            EntityManager entityManager,
+            RouteDirectionsService directionsService
     ) {
         this.routeRepository = routeRepository;
         this.driverRepository = driverRepository;
@@ -71,6 +73,7 @@ public class RouteService {
         this.trailerRepository = trailerRepository;
         this.goodsRepository = goodsRepository;
         this.entityManager = entityManager;
+        this.directionsService = directionsService;
     }
 
     @Transactional(readOnly = true)
@@ -86,7 +89,7 @@ public class RouteService {
     }
 
     public RouteResponse create(RouteCreateRequest request) {
-        validateSchedule(request.departureTime(), request.estimatedArrivalTime());
+        validateDepartureTime(request.departureTime());
         Set<Long> goodsIds = validateStops(request.stops());
         List<Long> sortedGoodsIds = goodsIds.stream().sorted().toList();
 
@@ -102,14 +105,22 @@ public class RouteService {
         }
 
         ensureResourcesEligibleForPlanning(driver, vehicle);
+        ensureGoodsUnassigned(goods);
+
+        Map<Long, Goods> goodsById = goods.stream().collect(Collectors.toMap(Goods::getId, Function.identity()));
+        List<String> addresses = request.stops().stream()
+                .map(stop -> addressFor(goodsById.get(stop.goodsId()), stop.type()))
+                .toList();
+        RouteTravelEstimate estimate = directionsService.estimate(addresses);
+        OffsetDateTime estimatedArrivalTime = request.departureTime().plus(estimate.drivingDuration());
+        validateSchedule(request.departureTime(), estimatedArrivalTime);
         ensureNoScheduleOverlap(
                 driver.getId(),
                 vehicle.getId(),
                 null,
                 request.departureTime(),
-                request.estimatedArrivalTime()
+                estimatedArrivalTime
         );
-        ensureGoodsUnassigned(goods);
 
         BigDecimal totalWeight = goods.stream()
                 .map(item -> BigDecimal.valueOf(item.getWeightKg()))
@@ -123,7 +134,7 @@ public class RouteService {
                 totalWeight,
                 totalVolume,
                 request.departureTime(),
-                request.estimatedArrivalTime()
+                estimatedArrivalTime
         );
         ensureDriverLicense(driver, vehicle.getVehicleType(), trailer != null);
 
@@ -132,9 +143,11 @@ public class RouteService {
                 vehicle,
                 trailer,
                 request.departureTime(),
-                request.estimatedArrivalTime()
+                estimatedArrivalTime,
+                estimate.distanceMeters(),
+                estimate.drivingDuration().toSeconds(),
+                estimate.returnDuration().toSeconds()
         );
-        Map<Long, Goods> goodsById = goods.stream().collect(Collectors.toMap(Goods::getId, Function.identity()));
         for (int index = 0; index < request.stops().size(); index++) {
             RouteStopRequest stopRequest = request.stops().get(index);
             route.addStop(new RouteStop(
@@ -168,8 +181,13 @@ public class RouteService {
             throw new RouteConflictException("Goods can only be delivered on an ACTIVE route.");
         }
         Goods goods = findGoodsOnRoute(route, goodsId);
+        ensureDeliveryOrder(route, goodsId);
         goods.markDelivered();
         goodsRepository.save(goods);
+        if (route.getGoods().stream().allMatch(item ->
+                item.getId().equals(goodsId) || item.getStatus() == GoodsStatus.DELIVERED)) {
+            complete(route);
+        }
         return toResponse(route);
     }
 
@@ -204,8 +222,15 @@ public class RouteService {
         List<Goods> goods = lockRouteGoods(route);
         ensureGoodsStatus(goods, GoodsStatus.DELIVERED);
         route.complete();
+        OffsetDateTime estimatedReturnTime = OffsetDateTime.now().plusSeconds(route.getReturnDurationSeconds());
+        route.setEstimatedReturnTime(estimatedReturnTime);
+        goods.forEach(Goods::archive);
+        goodsRepository.saveAll(goods);
+
+        Driver driver = lockDriver(route.getDriver().getId());
+        driver.markReturning();
+        driverRepository.save(driver);
         routeRepository.saveAndFlush(route);
-        releaseResourcesIfNoActiveRoute(route);
     }
 
     private void cancel(Route route) {
@@ -223,30 +248,67 @@ public class RouteService {
         }
         goodsRepository.saveAll(goods);
         if (wasActive) {
-            releaseResourcesIfNoActiveRoute(route);
+            OffsetDateTime estimatedReturnTime = OffsetDateTime.now().plusSeconds(route.getReturnDurationSeconds());
+            route.setEstimatedReturnTime(estimatedReturnTime);
+            Driver driver = lockDriver(route.getDriver().getId());
+            driver.markReturning();
+            driverRepository.save(driver);
+        } else {
+            route.clearEstimatedReturnTime();
         }
+        routeRepository.saveAndFlush(route);
     }
 
-    private void releaseResourcesIfNoActiveRoute(Route route) {
-        Driver driver = lockDriver(route.getDriver().getId());
-        Vehicle vehicle = lockVehicle(route.getVehicle().getId());
-        Trailer trailer = route.getTrailer() == null ? null : lockTrailer(route.getTrailer().getId());
+    public int releaseDueReturns() {
+        List<Route> dueRoutes = routeRepository.findAllByStatusInAndEstimatedReturnTimeLessThanEqualAndReturnedAtIsNull(
+                List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), OffsetDateTime.now()
+        );
+        int released = 0;
+        for (Route route : dueRoutes) {
+            Driver driver = lockDriver(route.getDriver().getId());
+            Vehicle vehicle = lockVehicle(route.getVehicle().getId());
+            Trailer trailer = route.getTrailer() == null ? null : lockTrailer(route.getTrailer().getId());
+            if (driver.getStatus() == DriverStatus.RETURNING
+                    && !routeRepository.existsByDriver_IdAndStatusAndIdNot(
+                    driver.getId(), RouteStatus.ACTIVE, route.getId())) {
+                driver.markAvailable();
+                driverRepository.save(driver);
+            }
+            if (vehicle.getStatus() == VehicleStatus.IN_TRANSIT
+                    && !routeRepository.existsByVehicle_IdAndStatusAndIdNot(
+                    vehicle.getId(), RouteStatus.ACTIVE, route.getId())) {
+                vehicle.markAvailable();
+                vehicleRepository.save(vehicle);
+            }
+            if (trailer != null && trailer.getStatus() == TrailerStatus.IN_TRANSIT
+                    && !routeRepository.existsByTrailer_IdAndStatusAndIdNot(
+                    trailer.getId(), RouteStatus.ACTIVE, route.getId())) {
+                trailer.markAvailable();
+                trailerRepository.save(trailer);
+            }
+            route.markReturned(OffsetDateTime.now());
+            routeRepository.save(route);
+            released++;
+        }
+        return released;
+    }
 
-        if (!routeRepository.existsByDriver_IdAndStatusAndIdNot(
-                driver.getId(), RouteStatus.ACTIVE, route.getId())) {
-            driver.markAvailable();
-            driverRepository.save(driver);
+    public void delete(Long id) {
+        Route route = findRouteForMutation(id);
+        if (route.getStatus() != RouteStatus.PLANNED && route.getStatus() != RouteStatus.CANCELLED) {
+            throw new RouteConflictException("Only PLANNED or CANCELLED routes can be deleted.");
         }
-        if (!routeRepository.existsByVehicle_IdAndStatusAndIdNot(
-                vehicle.getId(), RouteStatus.ACTIVE, route.getId())) {
-            vehicle.markAvailable();
-            vehicleRepository.save(vehicle);
+        if (route.getStatus() == RouteStatus.CANCELLED
+                && route.getEstimatedReturnTime() != null && route.getReturnedAt() == null) {
+            throw new RouteConflictException("A cancelled route cannot be deleted while its resources are returning.");
         }
-        if (trailer != null && !routeRepository.existsByTrailer_IdAndStatusAndIdNot(
-                trailer.getId(), RouteStatus.ACTIVE, route.getId())) {
-            trailer.markAvailable();
-            trailerRepository.save(trailer);
+        for (Goods good : lockRouteGoods(route)) {
+            if (good.getStatus() == GoodsStatus.ASSIGNED || good.getStatus() == GoodsStatus.IN_TRANSIT) {
+                good.releaseFromRoute();
+            }
         }
+        routeRepository.delete(route);
+        routeRepository.flush();
     }
 
     private Trailer selectTrailer(
@@ -278,6 +340,9 @@ public class RouteService {
                 .filter(trailer -> fitsTrailer(trailer, remainingWeight, remainingVolume))
                 .filter(trailer -> !routeRepository.existsTrailerScheduleOverlap(
                         trailer.getId(), SCHEDULED_STATUSES, departureTime, arrivalTime
+                ))
+                .filter(trailer -> !routeRepository.existsByTrailer_IdAndStatusInAndEstimatedReturnTimeAfter(
+                        trailer.getId(), List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), departureTime
                 ))
                 .min(Comparator
                         .comparing((Trailer trailer) ->
@@ -317,6 +382,15 @@ public class RouteService {
         if (trailerId != null && routeRepository.existsTrailerScheduleOverlap(
                 trailerId, SCHEDULED_STATUSES, departureTime, arrivalTime)) {
             throw new RouteConflictException("The trailer already has an overlapping planned or active route.");
+        }
+        if (routeRepository.existsByDriver_IdAndStatusInAndEstimatedReturnTimeAfter(
+                driverId, List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), departureTime
+        ) || routeRepository.existsByVehicle_IdAndStatusInAndEstimatedReturnTimeAfter(
+                vehicleId, List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), departureTime
+        ) || (trailerId != null && routeRepository.existsByTrailer_IdAndStatusInAndEstimatedReturnTimeAfter(
+                trailerId, List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), departureTime
+        ))) {
+            throw new RouteConflictException("An assigned resource is still returning from a completed route.");
         }
     }
 
@@ -382,9 +456,35 @@ public class RouteService {
         return Set.copyOf(stopTypesByGoods.keySet());
     }
 
+    private static void validateDepartureTime(OffsetDateTime departureTime) {
+        if (departureTime == null) {
+            throw new InvalidRouteException("Departure time is required.");
+        }
+    }
+
     private static void validateSchedule(OffsetDateTime departureTime, OffsetDateTime arrivalTime) {
-        if (departureTime == null || arrivalTime == null || !arrivalTime.isAfter(departureTime)) {
+        if (!arrivalTime.isAfter(departureTime)) {
             throw new InvalidRouteException("Estimated arrival time must be after departure time.");
+        }
+    }
+
+    private static String addressFor(Goods goods, RouteStopType type) {
+        return type == RouteStopType.PICKUP ? goods.getPickupAddress() : goods.getDeliveryAddress();
+    }
+
+    private static void ensureDeliveryOrder(Route route, Long goodsId) {
+        int targetOrder = route.getStops().stream()
+                .filter(stop -> stop.getStopType() == RouteStopType.DELIVERY)
+                .filter(stop -> stop.getGoods().getId().equals(goodsId))
+                .mapToInt(RouteStop::getStopOrder)
+                .findFirst()
+                .orElseThrow(() -> new RouteConflictException("Goods has no delivery stop on this route."));
+        boolean earlierDeliveryPending = route.getStops().stream()
+                .filter(stop -> stop.getStopType() == RouteStopType.DELIVERY)
+                .filter(stop -> stop.getStopOrder() < targetOrder)
+                .anyMatch(stop -> stop.getGoods().getStatus() != GoodsStatus.DELIVERED);
+        if (earlierDeliveryPending) {
+            throw new RouteConflictException("Goods must be delivered in the planned route-stop order.");
         }
     }
 
@@ -480,6 +580,10 @@ public class RouteService {
                 route.getTrailer() == null ? null : route.getTrailer().getLicensePlate(),
                 route.getDepartureTime(),
                 route.getEstimatedArrivalTime(),
+                route.getEstimatedReturnTime(),
+                route.getReturnedAt(),
+                route.getDistanceMeters(),
+                route.getDrivingDurationSeconds(),
                 route.getStatus(),
                 stops
         );

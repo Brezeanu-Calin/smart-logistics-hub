@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Locale;
+import java.time.OffsetDateTime;
 
 @Service
 @Transactional
@@ -117,7 +118,10 @@ public class VehicleService {
 
     private void ensureNotScheduled(Vehicle vehicle) {
         if (routeRepository.existsByVehicle_IdAndStatusIn(
-                vehicle.getId(), List.of(RouteStatus.PLANNED, RouteStatus.ACTIVE))) {
+                vehicle.getId(), List.of(RouteStatus.PLANNED, RouteStatus.ACTIVE))
+                || vehicle.getStatus() == VehicleStatus.IN_TRANSIT
+                || routeRepository.existsByVehicle_IdAndStatusInAndEstimatedReturnTimeAfter(
+                vehicle.getId(), List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), OffsetDateTime.now())) {
             throw new VehicleScheduledException(vehicle.getId());
         }
     }

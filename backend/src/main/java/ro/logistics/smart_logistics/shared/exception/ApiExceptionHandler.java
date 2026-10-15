@@ -14,6 +14,7 @@ import ro.logistics.smart_logistics.goods.application.TrackingCodeGenerationExce
 import ro.logistics.smart_logistics.route.application.InvalidRouteException;
 import ro.logistics.smart_logistics.route.application.RouteConflictException;
 import ro.logistics.smart_logistics.route.application.RouteNotFoundException;
+import ro.logistics.smart_logistics.route.application.RoutingUnavailableException;
 import ro.logistics.smart_logistics.trailer.application.DuplicateTrailerLicensePlateException;
 import ro.logistics.smart_logistics.trailer.application.InvalidTrailerStatusException;
 import ro.logistics.smart_logistics.trailer.application.TrailerInUseException;
@@ -108,6 +109,11 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(TrackingCodeGenerationException.class)
     public ResponseEntity<ApiError> handleTrackingCodeGeneration(TrackingCodeGenerationException exception) {
+        return response(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(RoutingUnavailableException.class)
+    public ResponseEntity<ApiError> handleRoutingUnavailable(RoutingUnavailableException exception) {
         return response(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), Map.of());
     }
 

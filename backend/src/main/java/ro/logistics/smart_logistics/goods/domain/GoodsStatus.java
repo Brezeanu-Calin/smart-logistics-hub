@@ -4,5 +4,6 @@ public enum GoodsStatus {
     UNASSIGNED,
     ASSIGNED,
     IN_TRANSIT,
-    DELIVERED
+    DELIVERED,
+    ARCHIVED
 }

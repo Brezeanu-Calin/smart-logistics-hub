@@ -15,6 +15,10 @@ public record RouteResponse(
         String trailerLicensePlate,
         OffsetDateTime departureTime,
         OffsetDateTime estimatedArrivalTime,
+        OffsetDateTime estimatedReturnTime,
+        OffsetDateTime returnedAt,
+        Long distanceMeters,
+        Long drivingDurationSeconds,
         RouteStatus status,
         List<RouteStopResponse> stops
 ) {

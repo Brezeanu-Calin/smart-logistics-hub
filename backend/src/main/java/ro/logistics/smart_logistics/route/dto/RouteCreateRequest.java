@@ -12,7 +12,6 @@ public record RouteCreateRequest(
         @NotNull @Positive Long driverId,
         @NotNull @Positive Long vehicleId,
         @NotNull OffsetDateTime departureTime,
-        @NotNull OffsetDateTime estimatedArrivalTime,
         @NotEmpty List<@Valid RouteStopRequest> stops
 ) {
 }

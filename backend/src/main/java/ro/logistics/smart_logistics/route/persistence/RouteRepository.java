@@ -84,4 +84,28 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
     boolean existsByVehicle_IdAndStatusIn(Long vehicleId, List<RouteStatus> statuses);
 
     boolean existsByStops_Goods_Id(Long goodsId);
+
+    @EntityGraph(attributePaths = {"driver", "vehicle", "trailer"})
+    List<Route> findAllByStatusInAndEstimatedReturnTimeLessThanEqualAndReturnedAtIsNull(
+            List<RouteStatus> statuses,
+            OffsetDateTime returnTime
+    );
+
+    boolean existsByDriver_IdAndStatusInAndEstimatedReturnTimeAfter(
+            Long driverId,
+            List<RouteStatus> statuses,
+            OffsetDateTime departureTime
+    );
+
+    boolean existsByVehicle_IdAndStatusInAndEstimatedReturnTimeAfter(
+            Long vehicleId,
+            List<RouteStatus> statuses,
+            OffsetDateTime departureTime
+    );
+
+    boolean existsByTrailer_IdAndStatusInAndEstimatedReturnTimeAfter(
+            Long trailerId,
+            List<RouteStatus> statuses,
+            OffsetDateTime departureTime
+    );
 }
