@@ -50,8 +50,8 @@ export interface Goods {
   description: string | null
   weightKg: number
   volumeM3: number
-  pickupAddress: string
-  deliveryAddress: string
+  pickupCity: string
+  deliveryCity: string
   status: 'UNASSIGNED' | 'ASSIGNED' | 'IN_TRANSIT' | 'DELIVERED' | 'ARCHIVED'
 }
 
@@ -61,8 +61,8 @@ export interface GoodsRequest {
   description: string | null
   weightKg: number
   volumeM3: number
-  pickupAddress: string
-  deliveryAddress: string
+  pickupCity: string
+  deliveryCity: string
 }
 
 export interface RouteStop {
@@ -70,7 +70,7 @@ export interface RouteStop {
   trackingCode: string
   type: 'PICKUP' | 'DELIVERY'
   stopOrder: number
-  address: string
+  city: string
   latitude: number | null
   longitude: number | null
 }

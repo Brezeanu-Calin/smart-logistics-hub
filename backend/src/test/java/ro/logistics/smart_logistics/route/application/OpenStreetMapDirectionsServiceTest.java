@@ -1,7 +1,7 @@
 package ro.logistics.smart_logistics.route.application;
 
-import ro.logistics.smart_logistics.route.domain.GeocodedAddress;
-import ro.logistics.smart_logistics.route.persistence.GeocodedAddressRepository;
+import ro.logistics.smart_logistics.route.domain.GeocodedCity;
+import ro.logistics.smart_logistics.route.persistence.GeocodedCityRepository;
 
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
@@ -56,15 +56,15 @@ class OpenStreetMapDirectionsServiceTest {
         server.start();
 
         try {
-            GeocodedAddressRepository repository = mock(GeocodedAddressRepository.class);
-            Map<String, GeocodedAddress> cache = new HashMap<>();
+            GeocodedCityRepository repository = mock(GeocodedCityRepository.class);
+            Map<String, GeocodedCity> cache = new HashMap<>();
             when(repository.findById(anyString()))
                     .thenAnswer(invocation -> Optional.ofNullable(cache.get(invocation.getArgument(0))));
-            when(repository.saveAndFlush(any(GeocodedAddress.class)))
+            when(repository.saveAndFlush(any(GeocodedCity.class)))
                     .thenAnswer(invocation -> {
-                        GeocodedAddress address = invocation.getArgument(0);
-                        cache.put(sha256(address.getNormalizedAddress()), address);
-                        return address;
+                        GeocodedCity city = invocation.getArgument(0);
+                        cache.put(sha256(city.getNormalizedCity()), city);
+                        return city;
                     });
 
             String baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
@@ -77,7 +77,7 @@ class OpenStreetMapDirectionsServiceTest {
                     "SmartLogisticsHubTest/1.0"
             );
 
-            RouteTravelEstimate estimate = service.estimate(List.of("Delivery address"));
+            RouteTravelEstimate estimate = service.estimate(List.of("Bucharest, Romania"));
 
             assertEquals(15_000, estimate.distanceMeters());
             assertEquals(Duration.ofSeconds(1_000), estimate.drivingDuration());
@@ -89,7 +89,7 @@ class OpenStreetMapDirectionsServiceTest {
             assertEquals(2, geocodingQueries.size());
             assertEquals(2, userAgents.size());
             assertEquals(
-                    List.of("Depot", "Delivery address"),
+                    List.of("Depot", "Bucharest, Romania"),
                     geocodingQueries.stream().map(query -> query.substring(2, query.indexOf("&format="))).toList()
             );
             assertEquals(

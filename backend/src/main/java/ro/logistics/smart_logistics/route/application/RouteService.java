@@ -103,10 +103,10 @@ public class RouteService {
         ensureGoodsUnassigned(observedGoods);
         Map<Long, Goods> observedGoodsById = observedGoods.stream()
                 .collect(Collectors.toMap(Goods::getId, Function.identity()));
-        List<String> addresses = request.stops().stream()
-                .map(stop -> addressFor(observedGoodsById.get(stop.goodsId()), stop.type()))
+        List<String> cities = request.stops().stream()
+                .map(stop -> cityFor(observedGoodsById.get(stop.goodsId()), stop.type()))
                 .toList();
-        RouteTravelEstimate estimate = directionsService.estimate(addresses);
+        RouteTravelEstimate estimate = directionsService.estimate(cities);
         if (estimate == null || estimate.stopCoordinates() == null
                 || estimate.stopCoordinates().size() != request.stops().size()
                 || estimate.geometry() == null || estimate.geometry().size() < 2
@@ -132,11 +132,11 @@ public class RouteService {
         ensureGoodsUnassigned(goods);
 
         Map<Long, Goods> goodsById = goods.stream().collect(Collectors.toMap(Goods::getId, Function.identity()));
-        List<String> lockedAddresses = request.stops().stream()
-                .map(stop -> addressFor(goodsById.get(stop.goodsId()), stop.type()))
+        List<String> lockedCities = request.stops().stream()
+                .map(stop -> cityFor(goodsById.get(stop.goodsId()), stop.type()))
                 .toList();
-        if (!addresses.equals(lockedAddresses)) {
-            throw new RouteConflictException("Freight addresses changed during route planning; please try again.");
+        if (!cities.equals(lockedCities)) {
+            throw new RouteConflictException("Freight cities changed during route planning; please try again.");
         }
 
         OffsetDateTime estimatedArrivalTime = request.departureTime().plus(estimate.drivingDuration());
@@ -501,8 +501,8 @@ public class RouteService {
         }
     }
 
-    private static String addressFor(Goods goods, RouteStopType type) {
-        return type == RouteStopType.PICKUP ? goods.getPickupAddress() : goods.getDeliveryAddress();
+    private static String cityFor(Goods goods, RouteStopType type) {
+        return type == RouteStopType.PICKUP ? goods.getPickupCity() : goods.getDeliveryCity();
     }
 
     private static void ensureDeliveryOrder(Route route, Long goodsId) {
@@ -600,7 +600,7 @@ public class RouteService {
                         stop.getGoods().getTrackingCode(),
                         stop.getStopType(),
                         stop.getStopOrder(),
-                        stop.getAddress(),
+                        stop.getCity(),
                         stop.getLatitude(),
                         stop.getLongitude()
                 ))

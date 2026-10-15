@@ -47,7 +47,7 @@ class GoodsServiceTest {
         var response = goodsService.saveGoods(dto(" Cluj ", " Bucharest "));
 
         assertEquals(GoodsStatus.UNASSIGNED, response.status());
-        assertEquals("Cluj", response.pickupAddress());
+        assertEquals("Cluj", response.pickupCity());
         assertTrue(response.trackingCode().matches("TRK-" + Year.now().getValue() + "-\\d{4}"));
     }
 
@@ -110,7 +110,7 @@ class GoodsServiceTest {
     }
 
     @Test
-    void saveGoodsRejectsEqualPickupAndDeliveryAddresses() {
+    void saveGoodsRejectsEqualPickupAndDeliveryCities() {
         assertThrows(
                 InvalidGoodsException.class,
                 () -> goodsService.saveGoods(dto(" Cluj ", "cluj"))
@@ -144,15 +144,15 @@ class GoodsServiceTest {
         verify(goodsRepository, never()).delete(any(Goods.class));
     }
 
-    private static GoodsDTO dto(String pickupAddress, String deliveryAddress) {
+    private static GoodsDTO dto(String pickupCity, String deliveryCity) {
         return new GoodsDTO(
                 "Client",
                 GoodsType.GENERAL,
                 null,
                 2500.0,
                 10.0,
-                pickupAddress,
-                deliveryAddress
+                pickupCity,
+                deliveryCity
         );
     }
 

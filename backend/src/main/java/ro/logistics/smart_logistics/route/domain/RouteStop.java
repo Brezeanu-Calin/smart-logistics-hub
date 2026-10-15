@@ -47,7 +47,7 @@ public class RouteStop {
     private Integer stopOrder;
 
     @Column(nullable = false, length = 500)
-    private String address;
+    private String city;
 
     @Column
     private Double latitude;
@@ -74,9 +74,9 @@ public class RouteStop {
         this.stopOrder = stopOrder;
         this.latitude = latitude;
         this.longitude = longitude;
-        this.address = stopType == RouteStopType.PICKUP
-                ? goods.getPickupAddress()
-                : goods.getDeliveryAddress();
+        this.city = stopType == RouteStopType.PICKUP
+                ? goods.getPickupCity()
+                : goods.getDeliveryCity();
     }
 
     void setRoute(Route route) {
@@ -99,8 +99,8 @@ public class RouteStop {
         return stopOrder;
     }
 
-    public String getAddress() {
-        return address;
+    public String getCity() {
+        return city;
     }
 
     public Double getLatitude() {

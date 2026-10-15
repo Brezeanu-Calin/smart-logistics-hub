@@ -14,10 +14,11 @@ been applied to a database.
 
 ## Route lifecycle
 
-Set `DEPOT_ADDRESS` in the backend environment to enable route planning; no API
-key is required. For example, configure a full depot address and set
+The route-planning depot defaults to `Cluj-Napoca, Romania`. Set `DEPOT_CITY` in
+the backend environment to override it; no API key is required. Set
 `NOMINATIM_USER_AGENT` to `SmartLogisticsHub/1.0 (contact: you@example.com)`.
-The backend geocodes addresses with OpenStreetMap's Nominatim service, caches
+Pickup and delivery fields accept city names. The backend geocodes city locations
+with OpenStreetMap's Nominatim service, caches
 successful geocoding results in SQL Server, and requests ordered road routes
 from OSRM. The configured depot is used as both the route origin and return
 destination. The default public Nominatim and OSRM services are community
@@ -28,10 +29,12 @@ to a descriptive application identifier and contact address in accordance with
 the service usage policy. `NOMINATIM_BASE_URL` and `OSRM_BASE_URL` can point to
 self-hosted instances.
 
+City-level routing estimates represent travel between geocoded city locations,
+not exact pickup or delivery points, so distances and ETAs are approximate.
 The returned route geometry is stored with the route and shown on a Leaflet map
 using OpenStreetMap tiles with attribution. Driving estimates do not include
 loading, delivery dwell, breaks, or live traffic. Planning returns `503` when
-geocoding or routing is unavailable and rejects addresses that Nominatim cannot
+geocoding or routing is unavailable and rejects cities that Nominatim cannot
 find.
 
 Create routes with `POST /api/routes`, selecting a driver, vehicle, timezone-aware

@@ -58,7 +58,7 @@ function renderRoute() {
       fillColor: stop.type === 'PICKUP' ? '#635bdb' : '#e6a14b',
       fillOpacity: 1,
     })
-      .bindPopup(`${stop.type} ${stop.stopOrder}: ${stop.address}`)
+      .bindPopup(`${stop.type} ${stop.stopOrder}: ${stop.city}`)
       .addTo(layers)
   })
 

@@ -13,7 +13,7 @@ public record GoodsDTO(
         @Size(max = 1000) String description,
         @NotNull @DecimalMin(value = "0.0", inclusive = false) Double weightKg,
         @NotNull @DecimalMin(value = "0.0", inclusive = false) Double volumeM3,
-        @NotBlank @Size(max = 500) String pickupAddress,
-        @NotBlank @Size(max = 500) String deliveryAddress
+        @NotBlank @Size(max = 500) String pickupCity,
+        @NotBlank @Size(max = 500) String deliveryCity
 ) {
 }

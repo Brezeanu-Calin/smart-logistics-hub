@@ -11,8 +11,8 @@ public record GoodsResponse(
         String description,
         Double weightKg,
         Double volumeM3,
-        String pickupAddress,
-        String deliveryAddress,
+        String pickupCity,
+        String deliveryCity,
         GoodsStatus status
 ) {
 }

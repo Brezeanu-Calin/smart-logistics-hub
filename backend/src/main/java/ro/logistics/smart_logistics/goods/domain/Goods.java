@@ -39,11 +39,11 @@ public class Goods {
     @Column(name = "volume_m3", nullable = false)
     private Double volumeM3;
 
-    @Column(name = "pickup_address", nullable = false, length = 500)
-    private String pickupAddress;
+    @Column(name = "pickup_city", nullable = false, length = 500)
+    private String pickupCity;
 
-    @Column(name = "delivery_address", nullable = false, length = 500)
-    private String deliveryAddress;
+    @Column(name = "delivery_city", nullable = false, length = 500)
+    private String deliveryCity;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -59,11 +59,11 @@ public class Goods {
             String description,
             Double weightKg,
             Double volumeM3,
-            String pickupAddress,
-            String deliveryAddress
+            String pickupCity,
+            String deliveryCity
     ) {
         this.trackingCode = trackingCode;
-        updateDetails(clientName, goodsType, description, weightKg, volumeM3, pickupAddress, deliveryAddress);
+        updateDetails(clientName, goodsType, description, weightKg, volumeM3, pickupCity, deliveryCity);
     }
 
     public void updateDetails(
@@ -72,16 +72,16 @@ public class Goods {
             String description,
             Double weightKg,
             Double volumeM3,
-            String pickupAddress,
-            String deliveryAddress
+            String pickupCity,
+            String deliveryCity
     ) {
         this.clientName = clientName;
         this.goodsType = goodsType;
         this.description = description;
         this.weightKg = weightKg;
         this.volumeM3 = volumeM3;
-        this.pickupAddress = pickupAddress;
-        this.deliveryAddress = deliveryAddress;
+        this.pickupCity = pickupCity;
+        this.deliveryCity = deliveryCity;
     }
 
     public void assignToRoute() {
@@ -145,12 +145,12 @@ public class Goods {
         return volumeM3;
     }
 
-    public String getPickupAddress() {
-        return pickupAddress;
+    public String getPickupCity() {
+        return pickupCity;
     }
 
-    public String getDeliveryAddress() {
-        return deliveryAddress;
+    public String getDeliveryCity() {
+        return deliveryCity;
     }
 
     public GoodsStatus getStatus() {

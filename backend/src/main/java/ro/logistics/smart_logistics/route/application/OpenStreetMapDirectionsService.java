@@ -1,8 +1,8 @@
 package ro.logistics.smart_logistics.route.application;
 
-import ro.logistics.smart_logistics.route.domain.GeocodedAddress;
+import ro.logistics.smart_logistics.route.domain.GeocodedCity;
 import ro.logistics.smart_logistics.route.dto.RouteCoordinate;
-import ro.logistics.smart_logistics.route.persistence.GeocodedAddressRepository;
+import ro.logistics.smart_logistics.route.persistence.GeocodedCityRepository;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -31,15 +31,15 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
 
     private final RestClient geocodingClient;
     private final RestClient routingClient;
-    private final GeocodedAddressRepository geocodedAddressRepository;
-    private final String depotAddress;
+    private final GeocodedCityRepository geocodedCityRepository;
+    private final String depotCity;
     private final String userAgent;
     private long lastGeocodingRequestAt;
 
     public OpenStreetMapDirectionsService(
             RestClient.Builder restClientBuilder,
-            GeocodedAddressRepository geocodedAddressRepository,
-            @Value("${routing.depot-address:}") String depotAddress,
+            GeocodedCityRepository geocodedCityRepository,
+            @Value("${routing.depot-city:Cluj-Napoca, Romania}") String depotCity,
             @Value("${routing.nominatim.base-url:https://nominatim.openstreetmap.org}") String nominatimBaseUrl,
             @Value("${routing.osrm.base-url:https://router.project-osrm.org}") String osrmBaseUrl,
             @Value("${routing.nominatim.user-agent:SmartLogisticsHub/1.0 (personal project)}") String userAgent
@@ -50,32 +50,32 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
         RestClient.Builder configuredBuilder = restClientBuilder.clone().requestFactory(requestFactory);
         this.geocodingClient = configuredBuilder.clone().baseUrl(nominatimBaseUrl).build();
         this.routingClient = configuredBuilder.clone().baseUrl(osrmBaseUrl).build();
-        this.geocodedAddressRepository = geocodedAddressRepository;
-        this.depotAddress = depotAddress;
+        this.geocodedCityRepository = geocodedCityRepository;
+        this.depotCity = depotCity;
         this.userAgent = userAgent;
     }
 
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public RouteTravelEstimate estimate(List<String> orderedStops) {
-        if (depotAddress.isBlank()) {
-            throw new RoutingUnavailableException("Configure DEPOT_ADDRESS before planning routes.");
+    public RouteTravelEstimate estimate(List<String> orderedCities) {
+        if (depotCity.isBlank()) {
+            throw new RoutingUnavailableException("Configure DEPOT_CITY before planning routes.");
         }
         if (userAgent.isBlank()) {
             throw new RoutingUnavailableException("Configure a descriptive NOMINATIM_USER_AGENT before planning routes.");
         }
-        if (orderedStops.isEmpty() || orderedStops.stream().anyMatch(String::isBlank)) {
-            throw new InvalidRouteException("Every route stop must have an address.");
+        if (orderedCities.isEmpty() || orderedCities.stream().anyMatch(String::isBlank)) {
+            throw new InvalidRouteException("Every route stop must have a city.");
         }
-        if (orderedStops.size() > 25) {
+        if (orderedCities.size() > 25) {
             throw new InvalidRouteException("OSRM supports at most 25 stops in one route.");
         }
 
-        List<String> addresses = new ArrayList<>(orderedStops.size() + 2);
-        addresses.add(depotAddress);
-        addresses.addAll(orderedStops);
-        addresses.add(depotAddress);
-        List<GeoPoint> waypoints = addresses.stream().map(this::geocode).toList();
+        List<String> cities = new ArrayList<>(orderedCities.size() + 2);
+        cities.add(depotCity);
+        cities.addAll(orderedCities);
+        cities.add(depotCity);
+        List<GeoPoint> waypoints = cities.stream().map(this::geocode).toList();
         String coordinatePath = waypoints.stream()
                 .map(point -> point.longitude() + "," + point.latitude())
                 .collect(Collectors.joining(";"));
@@ -93,15 +93,15 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
                     .retrieve()
                     .body(OsrmResponse.class);
         } catch (RestClientException exception) {
-            throw new RoutingUnavailableException("OSRM could not calculate a route for the supplied addresses.", exception);
+            throw new RoutingUnavailableException("OSRM could not calculate a route for the supplied cities.", exception);
         }
 
         if (response == null || !"Ok".equals(response.code()) || response.routes() == null
                 || response.routes().isEmpty()) {
-            throw new RoutingUnavailableException("OSRM returned no route for the supplied addresses.");
+            throw new RoutingUnavailableException("OSRM returned no route for the supplied cities.");
         }
         OsrmRoute route = response.routes().getFirst();
-        if (route.legs() == null || route.legs().size() != orderedStops.size() + 1
+        if (route.legs() == null || route.legs().size() != orderedCities.size() + 1
                 || route.geometry() == null || route.geometry().coordinates() == null
                 || !Double.isFinite(route.distance()) || route.distance() <= 0
                 || !Double.isFinite(route.duration()) || route.duration() <= 0) {
@@ -114,7 +114,7 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
         List<RouteCoordinate> stopCoordinates = waypoints.subList(1, waypoints.size() - 1).stream()
                 .map(point -> new RouteCoordinate(point.latitude(), point.longitude()))
                 .toList();
-        if (geometry.size() < 2 || stopCoordinates.size() != orderedStops.size()) {
+        if (geometry.size() < 2 || stopCoordinates.size() != orderedCities.size()) {
             throw new RoutingUnavailableException("OSRM returned invalid route geometry.");
         }
 
@@ -136,10 +136,10 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
         );
     }
 
-    private synchronized GeoPoint geocode(String address) {
-        String normalized = normalizeAddress(address);
+    private synchronized GeoPoint geocode(String city) {
+        String normalized = normalizeCity(city);
         String hash = sha256(normalized);
-        GeocodedAddress cached = geocodedAddressRepository.findById(hash).orElse(null);
+        GeocodedCity cached = geocodedCityRepository.findById(hash).orElse(null);
         if (cached != null) {
             return new GeoPoint(cached.getLatitude(), cached.getLongitude());
         }
@@ -149,7 +149,7 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
         try {
             results = geocodingClient.get()
                     .uri(uriBuilder -> uriBuilder.path("/search")
-                            .queryParam("q", address)
+                            .queryParam("q", city)
                             .queryParam("format", "jsonv2")
                             .queryParam("limit", 1)
                             .build())
@@ -158,10 +158,10 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
                     .retrieve()
                     .body(NominatimResult[].class);
         } catch (RestClientException exception) {
-            throw new RoutingUnavailableException("Nominatim could not locate address: " + address, exception);
+            throw new RoutingUnavailableException("Nominatim could not locate city: " + city, exception);
         }
         if (results == null || results.length == 0) {
-            throw new InvalidRouteException("Nominatim could not find a location for address: " + address);
+            throw new InvalidRouteException("Nominatim could not find a location for city: " + city);
         }
 
         double latitude;
@@ -170,15 +170,15 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
             latitude = Double.parseDouble(results[0].lat());
             longitude = Double.parseDouble(results[0].lon());
         } catch (NumberFormatException exception) {
-            throw new RoutingUnavailableException("Nominatim returned invalid coordinates for: " + address, exception);
+            throw new RoutingUnavailableException("Nominatim returned invalid coordinates for city: " + city, exception);
         }
         if (!Double.isFinite(latitude) || latitude < -90 || latitude > 90
                 || !Double.isFinite(longitude) || longitude < -180 || longitude > 180) {
-            throw new RoutingUnavailableException("Nominatim returned invalid coordinates for: " + address);
+            throw new RoutingUnavailableException("Nominatim returned invalid coordinates for city: " + city);
         }
 
-        geocodedAddressRepository.saveAndFlush(
-                new GeocodedAddress(hash, normalized, latitude, longitude)
+        geocodedCityRepository.saveAndFlush(
+                new GeocodedCity(hash, normalized, latitude, longitude)
         );
         return new GeoPoint(latitude, longitude);
     }
@@ -190,14 +190,14 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
                 Thread.sleep(waitMillis);
             } catch (InterruptedException exception) {
                 Thread.currentThread().interrupt();
-                throw new RoutingUnavailableException("Address lookup was interrupted.", exception);
+                throw new RoutingUnavailableException("City lookup was interrupted.", exception);
             }
         }
         lastGeocodingRequestAt = System.currentTimeMillis();
     }
 
-    private static String normalizeAddress(String address) {
-        return Normalizer.normalize(address, Normalizer.Form.NFKC)
+    private static String normalizeCity(String city) {
+        return Normalizer.normalize(city, Normalizer.Form.NFKC)
                 .trim()
                 .replaceAll("\\s+", " ")
                 .toLowerCase(Locale.ROOT);

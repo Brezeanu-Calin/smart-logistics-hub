@@ -43,8 +43,8 @@ const goodsForm = reactive<GoodsRequest>({
   description: null,
   weightKg: 1,
   volumeM3: 1,
-  pickupAddress: '',
-  deliveryAddress: '',
+  pickupCity: '',
+  deliveryCity: '',
 })
 const editingGoodsId = ref<number | null>(null)
 const routeForm = reactive({
@@ -213,8 +213,8 @@ function resetGoodsForm() {
     description: null,
     weightKg: 1,
     volumeM3: 1,
-    pickupAddress: '',
-    deliveryAddress: '',
+    pickupCity: '',
+    deliveryCity: '',
   })
 }
 
@@ -226,8 +226,8 @@ function editGoods(item: Goods) {
     description: item.description,
     weightKg: item.weightKg,
     volumeM3: item.volumeM3,
-    pickupAddress: item.pickupAddress,
-    deliveryAddress: item.deliveryAddress,
+    pickupCity: item.pickupCity,
+    deliveryCity: item.deliveryCity,
   })
   section.value = 'freight'
 }
@@ -448,14 +448,14 @@ routeForm.departureLocal = defaultDepartureTime()
         <template v-else-if="section === 'routes'">
           <div class="page-heading"><div><p class="eyebrow">DISPATCH</p><h1>Routes</h1><p class="subtitle">Plan journeys, track delivery progress, and manage returns.</p></div></div>
           <section class="panel form-panel">
-            <div class="panel-heading"><div><h2>Plan a route</h2><p>Addresses are geocoded with Nominatim and routed by OSRM.</p></div><span class="form-step">NEW ROUTE</span></div>
+            <div class="panel-heading"><div><h2>Plan a route</h2><p>Cities are geocoded with Nominatim and routed by OSRM.</p></div><span class="form-step">NEW ROUTE</span></div>
             <form class="form-grid route-form" @submit.prevent="createRoute">
               <label>Driver<select v-model.number="routeForm.driverId" required><option :value="0" disabled>Select an available driver</option><option v-for="driver in drivers.filter((item) => item.status === 'AVAILABLE')" :key="driver.id" :value="driver.id">{{ driver.name }} · {{ driver.licenseCategories.join(', ') }}</option></select></label>
               <label>Vehicle<select v-model.number="routeForm.vehicleId" required><option :value="0" disabled>Select an available vehicle</option><option v-for="vehicle in vehicles.filter((item) => item.status === 'AVAILABLE')" :key="vehicle.id" :value="vehicle.id">{{ vehicle.licensePlate }} · {{ vehicle.vehicleType.replaceAll('_', ' ') }}</option></select></label>
               <label>Departure time<input v-model="routeForm.departureLocal" type="datetime-local" required></label>
-              <fieldset class="goods-picker"><legend>Unassigned freight <span>{{ selectedGoodsIds.length }} selected</span></legend><div v-if="!unassignedGoods.length" class="small-empty">No unassigned freight is available.</div><label v-for="item in unassignedGoods" :key="item.id" class="check-row"><input v-model="selectedGoodsIds" type="checkbox" :value="item.id"><span><strong>{{ item.clientName }}</strong><small>{{ item.trackingCode }} · {{ item.pickupAddress }} → {{ item.deliveryAddress }}</small></span><b>{{ item.weightKg }} kg</b></label></fieldset>
+              <fieldset class="goods-picker"><legend>Unassigned freight <span>{{ selectedGoodsIds.length }} selected</span></legend><div v-if="!unassignedGoods.length" class="small-empty">No unassigned freight is available.</div><label v-for="item in unassignedGoods" :key="item.id" class="check-row"><input v-model="selectedGoodsIds" type="checkbox" :value="item.id"><span><strong>{{ item.clientName }}</strong><small>{{ item.trackingCode }} · {{ item.pickupCity }} → {{ item.deliveryCity }}</small></span><b>{{ item.weightKg }} kg</b></label></fieldset>
               <div v-if="selectedGoods.length" class="selected-order"><strong>Pickup and delivery order</strong><p>All pickups are planned first; delivery order follows this list. Use the arrows to reorder.</p><ol><li v-for="(item, index) in selectedGoods" :key="item.id"><span class="order-number">{{ index + 1 }}</span><span class="order-name">{{ item.clientName }} <small>{{ item.trackingCode }}</small></span><button type="button" :disabled="index === 0" :aria-label="`Move ${item.clientName} up`" @click="moveSelectedGoods(index, -1)">↑</button><button type="button" :disabled="index === selectedGoods.length - 1" :aria-label="`Move ${item.clientName} down`" @click="moveSelectedGoods(index, 1)">↓</button></li></ol></div>
-              <div class="form-actions"><button class="primary-button" :disabled="busy || !routeForm.driverId || !routeForm.vehicleId || selectedGoodsIds.length > 12">Calculate &amp; plan route</button><span>Each freight item gets pickup and delivery stops. Addresses are geocoded once and cached.</span></div>
+              <div class="form-actions"><button class="primary-button" :disabled="busy || !routeForm.driverId || !routeForm.vehicleId || selectedGoodsIds.length > 12">Calculate &amp; plan route</button><span>City-level estimates use geocoded city locations, not exact pickup or delivery points. Distances and ETAs are approximate; city geocodes are cached.</span></div>
             </form>
           </section>
           <section class="panel">
@@ -467,7 +467,7 @@ routeForm.departureLocal = defaultDepartureTime()
                 <div class="route-summary"><div><small>DRIVER</small><strong>{{ route.driverName }}</strong></div><div><small>VEHICLE</small><strong>{{ route.vehicleLicensePlate }}<template v-if="route.trailerLicensePlate"> + {{ route.trailerLicensePlate }}</template></strong></div><div><small>DEPARTURE</small><strong>{{ displayDate(route.departureTime) }}</strong></div><div><small>EST. AT DEPOT</small><strong>{{ displayDate(route.estimatedReturnTime) }}</strong></div></div>
                 <div class="route-metrics"><span>↔ {{ (route.distanceMeters / 1000).toFixed(1) }} km total distance</span><span>◷ {{ displayDuration(route.drivingDurationSeconds) }} driving</span><span v-if="route.returnedAt">✓ Returned {{ displayDate(route.returnedAt) }}</span></div>
                 <RouteMap v-if="expandedRouteMaps.has(route.id)" :route-id="route.id" :geometry="route.geometry" :stops="route.stops" />
-                <ol class="stop-list"><li v-for="stop in route.stops" :key="`${stop.goodsId}-${stop.type}`"><span class="stop-marker" :class="stop.type.toLowerCase()"></span><span><small>{{ stop.type }} · {{ stop.trackingCode }}</small><strong>{{ stop.address }}</strong></span><button v-if="route.status === 'ACTIVE' && stop.type === 'DELIVERY' && goodsStatus(stop.goodsId) === 'IN_TRANSIT' && canConfirmDelivery(route, stop.goodsId)" class="text-button" :disabled="busy" @click="deliverGoods(route, stop.goodsId)">Confirm delivery</button><span v-else-if="stop.type === 'DELIVERY' && ['DELIVERED', 'ARCHIVED'].includes(goodsStatus(stop.goodsId) ?? '')" class="delivered-label">Delivered</span><span v-else-if="route.status === 'ACTIVE' && stop.type === 'DELIVERY' && goodsStatus(stop.goodsId) === 'IN_TRANSIT'" class="delivered-label">Next stop pending</span></li></ol>
+                <ol class="stop-list"><li v-for="stop in route.stops" :key="`${stop.goodsId}-${stop.type}`"><span class="stop-marker" :class="stop.type.toLowerCase()"></span><span><small>{{ stop.type }} · {{ stop.trackingCode }}</small><strong>{{ stop.city }}</strong></span><button v-if="route.status === 'ACTIVE' && stop.type === 'DELIVERY' && goodsStatus(stop.goodsId) === 'IN_TRANSIT' && canConfirmDelivery(route, stop.goodsId)" class="text-button" :disabled="busy" @click="deliverGoods(route, stop.goodsId)">Confirm delivery</button><span v-else-if="stop.type === 'DELIVERY' && ['DELIVERED', 'ARCHIVED'].includes(goodsStatus(stop.goodsId) ?? '')" class="delivered-label">Delivered</span><span v-else-if="route.status === 'ACTIVE' && stop.type === 'DELIVERY' && goodsStatus(stop.goodsId) === 'IN_TRANSIT'" class="delivered-label">Next stop pending</span></li></ol>
                 <div v-if="route.status === 'PLANNED'" class="route-footer"><button class="text-button danger-text" :disabled="busy" @click="setRouteStatus(route, 'CANCELLED')">Cancel route</button></div>
               </article>
             </div>
@@ -483,15 +483,15 @@ routeForm.departureLocal = defaultDepartureTime()
               <label>Freight type<select v-model="goodsForm.goodsType"><option value="GENERAL">General</option><option value="REFRIGERATED">Refrigerated</option><option value="HAZARDOUS">Hazardous</option></select></label>
               <label>Weight (kg)<input v-model.number="goodsForm.weightKg" type="number" min="0.01" step="0.01" required></label>
               <label>Volume (m³)<input v-model.number="goodsForm.volumeM3" type="number" min="0.01" step="0.01" required></label>
-              <label class="full-width">Pickup address<input v-model.trim="goodsForm.pickupAddress" maxlength="500" required></label>
-              <label class="full-width">Delivery address<input v-model.trim="goodsForm.deliveryAddress" maxlength="500" required></label>
+              <label class="full-width">Pickup city<input v-model.trim="goodsForm.pickupCity" maxlength="500" required></label>
+              <label class="full-width">Delivery city<input v-model.trim="goodsForm.deliveryCity" maxlength="500" required></label>
               <label class="full-width">Description <span class="optional">(optional)</span><textarea v-model.trim="goodsForm.description" maxlength="1000" rows="2"></textarea></label>
               <div class="form-actions"><button class="primary-button" :disabled="busy">{{ editingGoodsId === null ? 'Add freight' : 'Save changes' }}</button></div>
             </form>
           </section>
           <section class="panel"><div class="panel-heading"><div><h2>Freight register</h2><p>{{ goods.length }} items including delivered freight kept for route history</p></div></div>
             <div v-if="!goods.length" class="empty-state"><span>▣</span><strong>No freight registered</strong><p>Add freight details here before creating a route.</p></div>
-            <div v-else class="table-wrap"><table><thead><tr><th>TRACKING</th><th>CLIENT / TYPE</th><th>ROUTE</th><th>WEIGHT / VOLUME</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="item in goods" :key="item.id"><td><strong>{{ item.trackingCode }}</strong><small>{{ item.pickupAddress }} → {{ item.deliveryAddress }}</small></td><td>{{ item.clientName }}<small>{{ formatStatus(item.goodsType) }}</small></td><td>{{ item.status === 'ARCHIVED' ? 'Completed route history' : item.status === 'UNASSIGNED' ? 'Not assigned' : 'In a route' }}</td><td>{{ item.weightKg }} kg<small>{{ item.volumeM3 }} m³</small></td><td><span class="status-pill" :class="item.status.toLowerCase()">{{ formatStatus(item.status) }}</span></td><td><div class="row-actions"><button v-if="item.status === 'UNASSIGNED' && !isGoodsOnRoute(item.id)" class="text-button" @click="editGoods(item)">Edit</button><button v-if="item.status === 'UNASSIGNED' && !isGoodsOnRoute(item.id)" class="text-button danger-text" @click="deleteGoods(item)">Delete</button></div></td></tr></tbody></table></div>
+            <div v-else class="table-wrap"><table><thead><tr><th>TRACKING</th><th>CLIENT / TYPE</th><th>ROUTE</th><th>WEIGHT / VOLUME</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="item in goods" :key="item.id"><td><strong>{{ item.trackingCode }}</strong><small>{{ item.pickupCity }} → {{ item.deliveryCity }}</small></td><td>{{ item.clientName }}<small>{{ formatStatus(item.goodsType) }}</small></td><td>{{ item.status === 'ARCHIVED' ? 'Completed route history' : item.status === 'UNASSIGNED' ? 'Not assigned' : 'In a route' }}</td><td>{{ item.weightKg }} kg<small>{{ item.volumeM3 }} m³</small></td><td><span class="status-pill" :class="item.status.toLowerCase()">{{ formatStatus(item.status) }}</span></td><td><div class="row-actions"><button v-if="item.status === 'UNASSIGNED' && !isGoodsOnRoute(item.id)" class="text-button" @click="editGoods(item)">Edit</button><button v-if="item.status === 'UNASSIGNED' && !isGoodsOnRoute(item.id)" class="text-button danger-text" @click="deleteGoods(item)">Delete</button></div></td></tr></tbody></table></div>
           </section>
         </template>
 

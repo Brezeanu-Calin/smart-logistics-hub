@@ -57,8 +57,8 @@ public class GoodsService {
                 normalizeOptional(dto.description()),
                 dto.weightKg(),
                 dto.volumeM3(),
-                normalize(dto.pickupAddress()),
-                normalize(dto.deliveryAddress())
+                normalize(dto.pickupCity()),
+                normalize(dto.deliveryCity())
         );
         return save(goods);
     }
@@ -73,8 +73,8 @@ public class GoodsService {
                 normalizeOptional(dto.description()),
                 dto.weightKg(),
                 dto.volumeM3(),
-                normalize(dto.pickupAddress()),
-                normalize(dto.deliveryAddress())
+                normalize(dto.pickupCity()),
+                normalize(dto.deliveryCity())
         );
         return save(goods);
     }
@@ -87,8 +87,8 @@ public class GoodsService {
                 source.getDescription(),
                 source.getWeightKg(),
                 source.getVolumeM3(),
-                source.getPickupAddress(),
-                source.getDeliveryAddress()
+                source.getPickupCity(),
+                source.getDeliveryCity()
         ));
     }
 
@@ -145,15 +145,15 @@ public class GoodsService {
         if (dto.volumeM3() == null || !Double.isFinite(dto.volumeM3()) || dto.volumeM3() <= 0) {
             throw new InvalidGoodsException("Volume must be a finite value greater than zero.");
         }
-        if (isBlank(dto.pickupAddress()) || isBlank(dto.deliveryAddress())) {
-            throw new InvalidGoodsException("Pickup and delivery addresses are required.");
+        if (isBlank(dto.pickupCity()) || isBlank(dto.deliveryCity())) {
+            throw new InvalidGoodsException("Pickup and delivery cities are required.");
         }
-        if (dto.pickupAddress().trim().equalsIgnoreCase(dto.deliveryAddress().trim())) {
-            throw new InvalidGoodsException("Pickup and delivery addresses must be different.");
+        if (dto.pickupCity().trim().equalsIgnoreCase(dto.deliveryCity().trim())) {
+            throw new InvalidGoodsException("Pickup and delivery cities must be different.");
         }
         if (dto.clientName().trim().length() > 150
-                || dto.pickupAddress().trim().length() > 500
-                || dto.deliveryAddress().trim().length() > 500
+                || dto.pickupCity().trim().length() > 500
+                || dto.deliveryCity().trim().length() > 500
                 || (dto.description() != null && dto.description().length() > 1000)) {
             throw new InvalidGoodsException("One or more goods fields exceed their maximum length.");
         }
@@ -194,8 +194,8 @@ public class GoodsService {
                 goods.getDescription(),
                 goods.getWeightKg(),
                 goods.getVolumeM3(),
-                goods.getPickupAddress(),
-                goods.getDeliveryAddress(),
+                goods.getPickupCity(),
+                goods.getDeliveryCity(),
                 goods.getStatus()
         );
     }
