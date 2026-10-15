@@ -7,6 +7,8 @@ public record RouteStopResponse(
         String trackingCode,
         RouteStopType type,
         Integer order,
-        String address
+        String address,
+        Double latitude,
+        Double longitude
 ) {
 }

@@ -32,7 +32,7 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
             where r.status in :statuses
               and r.driver.id = :driverId
               and r.departureTime < :arrivalTime
-              and r.estimatedArrivalTime > :departureTime
+              and coalesce(r.estimatedReturnTime, r.estimatedArrivalTime) > :departureTime
             """)
     boolean existsDriverScheduleOverlap(
             @Param("driverId") Long driverId,
@@ -47,7 +47,7 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
             where r.status in :statuses
               and r.vehicle.id = :vehicleId
               and r.departureTime < :arrivalTime
-              and r.estimatedArrivalTime > :departureTime
+              and coalesce(r.estimatedReturnTime, r.estimatedArrivalTime) > :departureTime
             """)
     boolean existsVehicleScheduleOverlap(
             @Param("vehicleId") Long vehicleId,
@@ -62,7 +62,7 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
             where r.status in :statuses
               and r.trailer.id = :trailerId
               and r.departureTime < :arrivalTime
-              and r.estimatedArrivalTime > :departureTime
+              and coalesce(r.estimatedReturnTime, r.estimatedArrivalTime) > :departureTime
             """)
     boolean existsTrailerScheduleOverlap(
             @Param("trailerId") Long trailerId,

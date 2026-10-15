@@ -72,6 +72,10 @@ public class Route {
     @OrderBy("stopOrder ASC")
     private List<RouteStop> stops = new ArrayList<>();
 
+    @OneToMany(mappedBy = "route", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("pointOrder ASC")
+    private List<RouteGeometryPoint> geometryPoints = new ArrayList<>();
+
     protected Route() {
     }
 
@@ -90,7 +94,7 @@ public class Route {
         this.trailer = trailer;
         this.departureTime = departureTime;
         this.estimatedArrivalTime = estimatedArrivalTime;
-        this.estimatedReturnTime = estimatedArrivalTime;
+        this.estimatedReturnTime = estimatedArrivalTime.plusSeconds(returnDurationSeconds);
         this.distanceMeters = distanceMeters;
         this.drivingDurationSeconds = drivingDurationSeconds;
         this.returnDurationSeconds = returnDurationSeconds;
@@ -99,6 +103,12 @@ public class Route {
     public void addStop(RouteStop stop) {
         stop.setRoute(this);
         stops.add(stop);
+    }
+
+    public void addGeometryPoint(double latitude, double longitude) {
+        RouteGeometryPoint point = new RouteGeometryPoint(geometryPoints.size() + 1, latitude, longitude);
+        point.setRoute(this);
+        geometryPoints.add(point);
     }
 
     public void activate() {
@@ -193,5 +203,9 @@ public class Route {
 
     public List<Goods> getGoods() {
         return stops.stream().map(RouteStop::getGoods).distinct().toList();
+    }
+
+    public List<RouteGeometryPoint> getGeometryPoints() {
+        return List.copyOf(geometryPoints);
     }
 }

@@ -14,12 +14,25 @@ been applied to a database.
 
 ## Route lifecycle
 
-Set `GOOGLE_ROUTES_API_KEY` and `DEPOT_ADDRESS` in the backend environment to
-enable route planning. The configured depot is used as both the route origin and
-return destination. Google Routes calculates the ordered road distance and
-driving duration; estimates use traffic-unaware driving times and do not include
+Set `DEPOT_ADDRESS` in the backend environment to enable route planning; no API
+key is required. For example, configure a full depot address and set
+`NOMINATIM_USER_AGENT` to `SmartLogisticsHub/1.0 (contact: you@example.com)`.
+The backend geocodes addresses with OpenStreetMap's Nominatim service, caches
+successful geocoding results in SQL Server, and requests ordered road routes
+from OSRM. The configured depot is used as both the route origin and return
+destination. The default public Nominatim and OSRM services are community
+services without availability guarantees; use them for low-volume personal
+testing, not production dispatch. Nominatim is throttled to at most one request
+per second and does not support autocomplete here. Set `NOMINATIM_USER_AGENT`
+to a descriptive application identifier and contact address in accordance with
+the service usage policy. `NOMINATIM_BASE_URL` and `OSRM_BASE_URL` can point to
+self-hosted instances.
+
+The returned route geometry is stored with the route and shown on a Leaflet map
+using OpenStreetMap tiles with attribution. Driving estimates do not include
 loading, delivery dwell, breaks, or live traffic. Planning returns `503` when
-Google Routes is not configured or cannot provide a valid estimate.
+geocoding or routing is unavailable and rejects addresses that Nominatim cannot
+find.
 
 Create routes with `POST /api/routes`, selecting a driver, vehicle, timezone-aware
 departure time, and ordered stops containing one pickup and one later delivery
@@ -32,7 +45,7 @@ all goods are delivered, the route becomes `COMPLETED`, goods are marked
 `ARCHIVED` (not physically deleted) to preserve the route history, and the
 driver changes to `RETURNING`. The vehicle and trailer remain `IN_TRANSIT`.
 The return ETA is recalculated from delivery confirmation using the final
-Google Routes leg. A background check (once a minute by default) treats that ETA
+OSRM leg. A background check (once a minute by default) treats that ETA
 as the depot-arrival proxy and changes returning resources to `AVAILABLE`.
 There is no GPS integration, so this is a time-based estimate, not confirmation
 of the driver's physical location. Cancelling a planned route releases its

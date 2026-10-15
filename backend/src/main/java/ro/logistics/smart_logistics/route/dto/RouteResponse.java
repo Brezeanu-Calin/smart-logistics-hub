@@ -20,6 +20,7 @@ public record RouteResponse(
         Long distanceMeters,
         Long drivingDurationSeconds,
         RouteStatus status,
-        List<RouteStopResponse> stops
+        List<RouteStopResponse> stops,
+        List<RouteCoordinate> geometry
 ) {
 }

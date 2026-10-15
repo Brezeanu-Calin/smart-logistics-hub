@@ -13,6 +13,7 @@ import ro.logistics.smart_logistics.route.domain.RouteStatus;
 import ro.logistics.smart_logistics.route.domain.RouteStop;
 import ro.logistics.smart_logistics.route.domain.RouteStopType;
 import ro.logistics.smart_logistics.route.dto.RouteCreateRequest;
+import ro.logistics.smart_logistics.route.dto.RouteCoordinate;
 import ro.logistics.smart_logistics.route.dto.RouteStatusRequest;
 import ro.logistics.smart_logistics.route.dto.RouteStopRequest;
 import ro.logistics.smart_logistics.route.persistence.RouteRepository;
@@ -82,6 +83,15 @@ class RouteServiceTest {
 
         assertEquals(RouteStatus.PLANNED, response.status());
         assertEquals(2, response.stops().size());
+        assertEquals(2, response.geometry().size());
+        assertEquals(
+                OffsetDateTime.parse("2026-10-15T14:00:00Z"),
+                response.estimatedArrivalTime()
+        );
+        assertEquals(
+                OffsetDateTime.parse("2026-10-15T15:00:00Z"),
+                response.estimatedReturnTime()
+        );
         assertEquals(GoodsStatus.ASSIGNED, goods.getStatus());
         assertEquals(DriverStatus.AVAILABLE, driver.getStatus());
         assertEquals(VehicleStatus.AVAILABLE, vehicle.getStatus());
@@ -168,9 +178,10 @@ class RouteServiceTest {
         Goods goods = goods(3L, 4000.0, 10.0);
         when(driverRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(driver));
         when(vehicleRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(vehicle));
+        when(goodsRepository.findAllById(List.of(3L))).thenReturn(List.of(goods));
         when(goodsRepository.findAllByIdForUpdate(List.of(3L))).thenReturn(List.of(goods));
         when(directionsService.estimate(anyList()))
-                .thenReturn(new RouteTravelEstimate(120_000, Duration.ofHours(6), Duration.ofHours(1)));
+                .thenReturn(estimate(2));
         when(routeRepository.existsDriverScheduleOverlap(
                 eq(1L), anyList(), any(OffsetDateTime.class), any(OffsetDateTime.class)
         )).thenReturn(true);
@@ -414,8 +425,9 @@ class RouteServiceTest {
         when(driverRepository.findByIdForUpdate(driver.getId())).thenReturn(Optional.of(driver));
         when(vehicleRepository.findByIdForUpdate(vehicle.getId())).thenReturn(Optional.of(vehicle));
         when(goodsRepository.findAllByIdForUpdate(List.of(goods.getId()))).thenReturn(List.of(goods));
+        when(goodsRepository.findAllById(List.of(goods.getId()))).thenReturn(List.of(goods));
         when(directionsService.estimate(anyList()))
-                .thenReturn(new RouteTravelEstimate(120_000, Duration.ofHours(6), Duration.ofHours(1)));
+                .thenReturn(estimate(2));
         when(routeRepository.existsDriverScheduleOverlap(
                 eq(driver.getId()), anyList(), any(OffsetDateTime.class), any(OffsetDateTime.class)
         )).thenReturn(false);
@@ -435,6 +447,19 @@ class RouteServiceTest {
                         new RouteStopRequest(goodsId, RouteStopType.PICKUP),
                         new RouteStopRequest(goodsId, RouteStopType.DELIVERY)
                 )
+        );
+    }
+
+    private static RouteTravelEstimate estimate(int stopCount) {
+        List<RouteCoordinate> stopCoordinates = java.util.Collections.nCopies(
+                stopCount, new RouteCoordinate(46.77, 23.59)
+        );
+        return new RouteTravelEstimate(
+                120_000,
+                Duration.ofHours(6),
+                Duration.ofHours(1),
+                List.of(new RouteCoordinate(46.77, 23.59), new RouteCoordinate(44.43, 26.10)),
+                stopCoordinates
         );
     }
 

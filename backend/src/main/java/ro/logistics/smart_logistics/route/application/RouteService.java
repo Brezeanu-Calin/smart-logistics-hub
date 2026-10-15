@@ -14,6 +14,7 @@ import ro.logistics.smart_logistics.route.domain.RouteStatus;
 import ro.logistics.smart_logistics.route.domain.RouteStop;
 import ro.logistics.smart_logistics.route.domain.RouteStopType;
 import ro.logistics.smart_logistics.route.dto.RouteCreateRequest;
+import ro.logistics.smart_logistics.route.dto.RouteCoordinate;
 import ro.logistics.smart_logistics.route.dto.RouteResponse;
 import ro.logistics.smart_logistics.route.dto.RouteStatusRequest;
 import ro.logistics.smart_logistics.route.dto.RouteStopRequest;
@@ -93,6 +94,29 @@ public class RouteService {
         Set<Long> goodsIds = validateStops(request.stops());
         List<Long> sortedGoodsIds = goodsIds.stream().sorted().toList();
 
+        List<Goods> observedGoods = goodsRepository.findAllById(sortedGoodsIds);
+        if (observedGoods.size() != sortedGoodsIds.size()) {
+            Set<Long> foundIds = observedGoods.stream().map(Goods::getId).collect(Collectors.toSet());
+            Long missingId = sortedGoodsIds.stream().filter(id -> !foundIds.contains(id)).findFirst().orElseThrow();
+            throw new GoodsNotFoundException(missingId);
+        }
+        ensureGoodsUnassigned(observedGoods);
+        Map<Long, Goods> observedGoodsById = observedGoods.stream()
+                .collect(Collectors.toMap(Goods::getId, Function.identity()));
+        List<String> addresses = request.stops().stream()
+                .map(stop -> addressFor(observedGoodsById.get(stop.goodsId()), stop.type()))
+                .toList();
+        RouteTravelEstimate estimate = directionsService.estimate(addresses);
+        if (estimate == null || estimate.stopCoordinates() == null
+                || estimate.stopCoordinates().size() != request.stops().size()
+                || estimate.geometry() == null || estimate.geometry().size() < 2
+                || estimate.distanceMeters() <= 0
+                || estimate.drivingDuration() == null || estimate.drivingDuration().isNegative()
+                || estimate.drivingDuration().isZero()
+                || estimate.returnDuration() == null || estimate.returnDuration().isNegative()) {
+            throw new RoutingUnavailableException("The routing service returned an incomplete route estimate.");
+        }
+
         Driver driver = driverRepository.findByIdForUpdate(request.driverId())
                 .orElseThrow(() -> new DriverNotFoundException(request.driverId()));
         Vehicle vehicle = vehicleRepository.findByIdForUpdate(request.vehicleId())
@@ -103,23 +127,27 @@ public class RouteService {
             Long missingId = sortedGoodsIds.stream().filter(id -> !foundIds.contains(id)).findFirst().orElseThrow();
             throw new GoodsNotFoundException(missingId);
         }
-
+        goods.forEach(good -> entityManager.refresh(good, LockModeType.PESSIMISTIC_WRITE));
         ensureResourcesEligibleForPlanning(driver, vehicle);
         ensureGoodsUnassigned(goods);
 
         Map<Long, Goods> goodsById = goods.stream().collect(Collectors.toMap(Goods::getId, Function.identity()));
-        List<String> addresses = request.stops().stream()
+        List<String> lockedAddresses = request.stops().stream()
                 .map(stop -> addressFor(goodsById.get(stop.goodsId()), stop.type()))
                 .toList();
-        RouteTravelEstimate estimate = directionsService.estimate(addresses);
+        if (!addresses.equals(lockedAddresses)) {
+            throw new RouteConflictException("Freight addresses changed during route planning; please try again.");
+        }
+
         OffsetDateTime estimatedArrivalTime = request.departureTime().plus(estimate.drivingDuration());
         validateSchedule(request.departureTime(), estimatedArrivalTime);
+        OffsetDateTime estimatedReturnTime = estimatedArrivalTime.plus(estimate.returnDuration());
         ensureNoScheduleOverlap(
                 driver.getId(),
                 vehicle.getId(),
                 null,
                 request.departureTime(),
-                estimatedArrivalTime
+                estimatedReturnTime
         );
 
         BigDecimal totalWeight = goods.stream()
@@ -134,7 +162,7 @@ public class RouteService {
                 totalWeight,
                 totalVolume,
                 request.departureTime(),
-                estimatedArrivalTime
+                estimatedReturnTime
         );
         ensureDriverLicense(driver, vehicle.getVehicleType(), trailer != null);
 
@@ -148,12 +176,17 @@ public class RouteService {
                 estimate.drivingDuration().toSeconds(),
                 estimate.returnDuration().toSeconds()
         );
+        for (RouteCoordinate coordinate : estimate.geometry()) {
+            route.addGeometryPoint(coordinate.latitude(), coordinate.longitude());
+        }
         for (int index = 0; index < request.stops().size(); index++) {
             RouteStopRequest stopRequest = request.stops().get(index);
             route.addStop(new RouteStop(
                     goodsById.get(stopRequest.goodsId()),
                     stopRequest.type(),
-                    index + 1
+                    index + 1,
+                    estimate.stopCoordinates().get(index).latitude(),
+                    estimate.stopCoordinates().get(index).longitude()
             ));
         }
         goods.forEach(Goods::assignToRoute);
@@ -567,8 +600,13 @@ public class RouteService {
                         stop.getGoods().getTrackingCode(),
                         stop.getStopType(),
                         stop.getStopOrder(),
-                        stop.getAddress()
+                        stop.getAddress(),
+                        stop.getLatitude(),
+                        stop.getLongitude()
                 ))
+                .toList();
+        List<RouteCoordinate> geometry = route.getGeometryPoints().stream()
+                .map(point -> new RouteCoordinate(point.getLatitude(), point.getLongitude()))
                 .toList();
         return new RouteResponse(
                 route.getId(),
@@ -585,7 +623,8 @@ public class RouteService {
                 route.getDistanceMeters(),
                 route.getDrivingDurationSeconds(),
                 route.getStatus(),
-                stops
+                stops,
+                geometry
         );
     }
 }

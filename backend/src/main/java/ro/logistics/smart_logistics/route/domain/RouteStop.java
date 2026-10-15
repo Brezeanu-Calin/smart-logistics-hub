@@ -49,13 +49,31 @@ public class RouteStop {
     @Column(nullable = false, length = 500)
     private String address;
 
+    @Column
+    private Double latitude;
+
+    @Column
+    private Double longitude;
+
     protected RouteStop() {
     }
 
     public RouteStop(Goods goods, RouteStopType stopType, Integer stopOrder) {
+        this(goods, stopType, stopOrder, null, null);
+    }
+
+    public RouteStop(
+            Goods goods,
+            RouteStopType stopType,
+            Integer stopOrder,
+            Double latitude,
+            Double longitude
+    ) {
         this.goods = goods;
         this.stopType = stopType;
         this.stopOrder = stopOrder;
+        this.latitude = latitude;
+        this.longitude = longitude;
         this.address = stopType == RouteStopType.PICKUP
                 ? goods.getPickupAddress()
                 : goods.getDeliveryAddress();
@@ -83,5 +101,13 @@ public class RouteStop {
 
     public String getAddress() {
         return address;
+    }
+
+    public Double getLatitude() {
+        return latitude;
+    }
+
+    public Double getLongitude() {
+        return longitude;
     }
 }

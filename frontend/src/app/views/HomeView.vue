@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import RouteMap from '../components/RouteMap.vue'
 import api, {
   getErrorMessage,
   type Driver,
@@ -52,6 +53,7 @@ const routeForm = reactive({
   departureLocal: '',
 })
 const selectedGoodsIds = ref<number[]>([])
+const expandedRouteMaps = ref(new Set<number>())
 
 const activeRoutes = computed(() => routes.value.filter((route) => route.status === 'ACTIVE').length)
 const availableDrivers = computed(() => drivers.value.filter((driver) => driver.status === 'AVAILABLE').length)
@@ -66,6 +68,13 @@ const selectedGoods = computed(() =>
 function clearMessages() {
   error.value = ''
   success.value = ''
+}
+
+function toggleRouteMap(routeId: number) {
+  const expanded = new Set(expandedRouteMaps.value)
+  if (expanded.has(routeId)) expanded.delete(routeId)
+  else expanded.add(routeId)
+  expandedRouteMaps.value = expanded
 }
 
 async function loadData() {
@@ -260,7 +269,7 @@ async function createRoute() {
     return
   }
   if (selectedGoodsIds.value.length > 12) {
-    error.value = 'A Google Routes plan can contain at most 12 freight items (25 stops).'
+    error.value = 'A route can contain at most 12 freight items (24 pickup/delivery stops).'
     return
   }
   busy.value = true
@@ -439,14 +448,14 @@ routeForm.departureLocal = defaultDepartureTime()
         <template v-else-if="section === 'routes'">
           <div class="page-heading"><div><p class="eyebrow">DISPATCH</p><h1>Routes</h1><p class="subtitle">Plan journeys, track delivery progress, and manage returns.</p></div></div>
           <section class="panel form-panel">
-            <div class="panel-heading"><div><h2>Plan a route</h2><p>Driving distance and duration are estimated using Google Routes.</p></div><span class="form-step">NEW ROUTE</span></div>
+            <div class="panel-heading"><div><h2>Plan a route</h2><p>Addresses are geocoded with Nominatim and routed by OSRM.</p></div><span class="form-step">NEW ROUTE</span></div>
             <form class="form-grid route-form" @submit.prevent="createRoute">
               <label>Driver<select v-model.number="routeForm.driverId" required><option :value="0" disabled>Select an available driver</option><option v-for="driver in drivers.filter((item) => item.status === 'AVAILABLE')" :key="driver.id" :value="driver.id">{{ driver.name }} · {{ driver.licenseCategories.join(', ') }}</option></select></label>
               <label>Vehicle<select v-model.number="routeForm.vehicleId" required><option :value="0" disabled>Select an available vehicle</option><option v-for="vehicle in vehicles.filter((item) => item.status === 'AVAILABLE')" :key="vehicle.id" :value="vehicle.id">{{ vehicle.licensePlate }} · {{ vehicle.vehicleType.replaceAll('_', ' ') }}</option></select></label>
               <label>Departure time<input v-model="routeForm.departureLocal" type="datetime-local" required></label>
               <fieldset class="goods-picker"><legend>Unassigned freight <span>{{ selectedGoodsIds.length }} selected</span></legend><div v-if="!unassignedGoods.length" class="small-empty">No unassigned freight is available.</div><label v-for="item in unassignedGoods" :key="item.id" class="check-row"><input v-model="selectedGoodsIds" type="checkbox" :value="item.id"><span><strong>{{ item.clientName }}</strong><small>{{ item.trackingCode }} · {{ item.pickupAddress }} → {{ item.deliveryAddress }}</small></span><b>{{ item.weightKg }} kg</b></label></fieldset>
               <div v-if="selectedGoods.length" class="selected-order"><strong>Pickup and delivery order</strong><p>All pickups are planned first; delivery order follows this list. Use the arrows to reorder.</p><ol><li v-for="(item, index) in selectedGoods" :key="item.id"><span class="order-number">{{ index + 1 }}</span><span class="order-name">{{ item.clientName }} <small>{{ item.trackingCode }}</small></span><button type="button" :disabled="index === 0" :aria-label="`Move ${item.clientName} up`" @click="moveSelectedGoods(index, -1)">↑</button><button type="button" :disabled="index === selectedGoods.length - 1" :aria-label="`Move ${item.clientName} down`" @click="moveSelectedGoods(index, 1)">↓</button></li></ol></div>
-              <div class="form-actions"><button class="primary-button" :disabled="busy || !routeForm.driverId || !routeForm.vehicleId || selectedGoodsIds.length > 12">Calculate &amp; plan route</button><span>Each freight item gets pickup and delivery stops; Google Routes allows up to 25 stops (12 freight items).</span></div>
+              <div class="form-actions"><button class="primary-button" :disabled="busy || !routeForm.driverId || !routeForm.vehicleId || selectedGoodsIds.length > 12">Calculate &amp; plan route</button><span>Each freight item gets pickup and delivery stops. Addresses are geocoded once and cached.</span></div>
             </form>
           </section>
           <section class="panel">
@@ -454,9 +463,10 @@ routeForm.departureLocal = defaultDepartureTime()
             <div v-if="!routes.length" class="empty-state"><span>↗</span><strong>No routes planned</strong><p>Assign an available driver, vehicle, and freight to create your first route.</p></div>
             <div v-else class="route-list">
               <article v-for="route in routes" :key="route.id" class="route-card">
-                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></div><div class="route-actions"><button v-if="route.status === 'PLANNED'" class="small-button" :disabled="busy" @click="setRouteStatus(route, 'ACTIVE')">Start route</button><button v-if="route.status === 'PLANNED' || (route.status === 'CANCELLED' && (!route.estimatedReturnTime || route.returnedAt))" class="icon-button danger" :disabled="busy" aria-label="Delete route" @click="deleteRoute(route)">⌫</button></div></div>
+                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></div><div class="route-actions"><button class="text-button" @click="toggleRouteMap(route.id)">{{ expandedRouteMaps.has(route.id) ? 'Hide map' : 'Show map' }}</button><button v-if="route.status === 'PLANNED'" class="small-button" :disabled="busy" @click="setRouteStatus(route, 'ACTIVE')">Start route</button><button v-if="route.status === 'PLANNED' || (route.status === 'CANCELLED' && (!route.estimatedReturnTime || route.returnedAt))" class="icon-button danger" :disabled="busy" aria-label="Delete route" @click="deleteRoute(route)">⌫</button></div></div>
                 <div class="route-summary"><div><small>DRIVER</small><strong>{{ route.driverName }}</strong></div><div><small>VEHICLE</small><strong>{{ route.vehicleLicensePlate }}<template v-if="route.trailerLicensePlate"> + {{ route.trailerLicensePlate }}</template></strong></div><div><small>DEPARTURE</small><strong>{{ displayDate(route.departureTime) }}</strong></div><div><small>EST. AT DEPOT</small><strong>{{ displayDate(route.estimatedReturnTime) }}</strong></div></div>
                 <div class="route-metrics"><span>↔ {{ (route.distanceMeters / 1000).toFixed(1) }} km total distance</span><span>◷ {{ displayDuration(route.drivingDurationSeconds) }} driving</span><span v-if="route.returnedAt">✓ Returned {{ displayDate(route.returnedAt) }}</span></div>
+                <RouteMap v-if="expandedRouteMaps.has(route.id)" :route-id="route.id" :geometry="route.geometry" :stops="route.stops" />
                 <ol class="stop-list"><li v-for="stop in route.stops" :key="`${stop.goodsId}-${stop.type}`"><span class="stop-marker" :class="stop.type.toLowerCase()"></span><span><small>{{ stop.type }} · {{ stop.trackingCode }}</small><strong>{{ stop.address }}</strong></span><button v-if="route.status === 'ACTIVE' && stop.type === 'DELIVERY' && goodsStatus(stop.goodsId) === 'IN_TRANSIT' && canConfirmDelivery(route, stop.goodsId)" class="text-button" :disabled="busy" @click="deliverGoods(route, stop.goodsId)">Confirm delivery</button><span v-else-if="stop.type === 'DELIVERY' && ['DELIVERED', 'ARCHIVED'].includes(goodsStatus(stop.goodsId) ?? '')" class="delivered-label">Delivered</span><span v-else-if="route.status === 'ACTIVE' && stop.type === 'DELIVERY' && goodsStatus(stop.goodsId) === 'IN_TRANSIT'" class="delivered-label">Next stop pending</span></li></ol>
                 <div v-if="route.status === 'PLANNED'" class="route-footer"><button class="text-button danger-text" :disabled="busy" @click="setRouteStatus(route, 'CANCELLED')">Cancel route</button></div>
               </article>
@@ -500,7 +510,7 @@ routeForm.departureLocal = defaultDepartureTime()
           </section>
           <section class="panel"><div class="panel-heading"><div><h2>Fleet register</h2><p>{{ vehicles.length }} vehicles registered</p></div></div><div v-if="!vehicles.length" class="empty-state"><strong>No vehicles registered</strong><p>Add a vehicle to start planning routes.</p></div><div v-else class="table-wrap"><table><thead><tr><th>VEHICLE</th><th>TYPE</th><th>CAPACITY</th><th>MILEAGE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="vehicle in vehicles" :key="vehicle.id"><td><strong>{{ vehicle.licensePlate }}</strong><small>{{ vehicle.make }} {{ vehicle.model }} · {{ vehicle.year }}</small></td><td>{{ formatStatus(vehicle.vehicleType) }}</td><td>{{ vehicle.maxWeightCapacityKg }} kg<small>{{ vehicle.maxVolumeM3 }} m³</small></td><td>{{ vehicle.currentMileageKm.toLocaleString() }} km</td><td><span class="status-pill" :class="vehicle.status.toLowerCase()">{{ formatStatus(vehicle.status) }}</span></td><td><div class="row-actions"><button v-if="!isVehicleScheduled(vehicle.id) && vehicle.status !== 'IN_TRANSIT'" class="text-button" @click="editVehicle(vehicle)">Edit</button><select v-if="!isVehicleScheduled(vehicle.id) && (vehicle.status === 'AVAILABLE' || vehicle.status === 'MAINTENANCE')" class="compact-select" :value="vehicle.status" aria-label="Vehicle status" @change="updateVehicleStatus(vehicle, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'MAINTENANCE')"><option value="AVAILABLE">Available</option><option value="MAINTENANCE">Maintenance</option></select><button class="text-button danger-text" :disabled="vehicle.status === 'IN_TRANSIT' || hasVehicleRoute(vehicle.id)" :title="hasVehicleRoute(vehicle.id) ? 'Route history references this vehicle' : ''" @click="deleteVehicle(vehicle)">Delete</button></div></td></tr></tbody></table></div></section>
         </template>
-        <footer class="page-footer">Smart Logistics Hub <span>·</span> Route estimates are based on Google Routes and do not include traffic or delivery dwell time.</footer>
+        <footer class="page-footer">Smart Logistics Hub <span>·</span> Routing and map data © OpenStreetMap contributors.</footer>
       </div>
     </section>
   </main>

@@ -71,6 +71,13 @@ export interface RouteStop {
   type: 'PICKUP' | 'DELIVERY'
   stopOrder: number
   address: string
+  latitude: number | null
+  longitude: number | null
+}
+
+export interface RouteCoordinate {
+  latitude: number
+  longitude: number
 }
 
 export interface Route {
@@ -89,6 +96,7 @@ export interface Route {
   drivingDurationSeconds: number
   status: 'PLANNED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
   stops: RouteStop[]
+  geometry: RouteCoordinate[]
 }
 
 export interface RouteCreateRequest {
