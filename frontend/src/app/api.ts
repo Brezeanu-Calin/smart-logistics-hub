@@ -29,6 +29,22 @@ export interface Vehicle {
   maxVolumeM3: number
   status: 'AVAILABLE' | 'IN_TRANSIT' | 'MAINTENANCE'
   currentMileageKm: number
+  transmissionType: 'MANUAL' | 'AUTOMATIC' | 'AMT'
+  maintenanceAutoTriggered: boolean
+  maintenanceComponents: VehicleMaintenanceComponent[]
+}
+
+export interface VehicleMaintenanceComponent {
+  key: string
+  label: string
+  serviceIntervalKm: number | null
+  serviceIntervalMonths: number | null
+  inspectionNote: string | null
+  lastPerformedAt: string | null
+  lastOdometerKm: number | null
+  healthPercent: number | null
+  distanceRemainingKm: number | null
+  daysRemaining: number | null
 }
 
 export interface VehicleRequest {
@@ -40,6 +56,11 @@ export interface VehicleRequest {
   maxWeightCapacityKg: number
   maxVolumeM3: number
   currentMileageKm: number
+  transmissionType: Vehicle['transmissionType']
+}
+
+export interface WarehouseConfig {
+  warehouseCity: string
 }
 
 export interface Goods {

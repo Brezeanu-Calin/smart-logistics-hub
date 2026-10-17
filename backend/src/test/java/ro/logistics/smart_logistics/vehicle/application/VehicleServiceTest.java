@@ -3,9 +3,11 @@ package ro.logistics.smart_logistics.vehicle.application;
 import ro.logistics.smart_logistics.vehicle.domain.Vehicle;
 import ro.logistics.smart_logistics.vehicle.domain.VehicleStatus;
 import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
+import ro.logistics.smart_logistics.vehicle.domain.TransmissionType;
 import ro.logistics.smart_logistics.vehicle.dto.VehicleRequest;
 import ro.logistics.smart_logistics.vehicle.persistence.VehicleRepository;
 import ro.logistics.smart_logistics.route.persistence.RouteRepository;
+import ro.logistics.smart_logistics.maintenance.application.VehicleMaintenanceService;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,6 +30,8 @@ class VehicleServiceTest {
     private VehicleRepository vehicleRepository;
     @Mock
     private RouteRepository routeRepository;
+    @Mock
+    private VehicleMaintenanceService maintenanceService;
 
     @InjectMocks
     private VehicleService vehicleService;
@@ -93,7 +97,8 @@ class VehicleServiceTest {
                 2022,
                 18000.0,
                 80.0,
-                120000
+                120000,
+                TransmissionType.AMT
         );
     }
 

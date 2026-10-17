@@ -1,6 +1,7 @@
 package ro.logistics.smart_logistics.vehicle.dto;
 
 import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
+import ro.logistics.smart_logistics.vehicle.domain.TransmissionType;
 
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Max;
@@ -18,6 +19,7 @@ public record VehicleRequest(
         @NotNull @Min(1900) @Max(2100) Integer year,
         @NotNull @DecimalMin(value = "0.0", inclusive = false) Double maxWeightCapacityKg,
         @NotNull @DecimalMin(value = "0.0", inclusive = false) Double maxVolumeM3,
-        @NotNull @Min(0) Integer currentMileageKm
+        @NotNull @Min(0) Integer currentMileageKm,
+        @NotNull TransmissionType transmissionType
 ) {
 }

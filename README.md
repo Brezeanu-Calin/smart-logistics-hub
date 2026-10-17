@@ -6,16 +6,30 @@ Create the SQL Server database itself before starting the backend. Flyway applie
 `backend/src/main/resources/db/migration` at startup and creates or updates the
 driver, vehicle, trailer, goods, route, and route-stop tables.
 No table creation is needed in SQL Server Management Studio.
+Set `DB_PASSWORD` in the backend process environment before running the
+application; `DB_USERNAME` can override the default `sa` login. Keep database
+credentials out of `application.properties` and source control. In PowerShell,
+set `$env:DB_PASSWORD` in the same terminal before starting the backend, or add
+`DB_PASSWORD` to the IntelliJ Spring Boot run configuration's environment
+variables.
 
 The backend uses `spring.jpa.hibernate.ddl-auto=validate`: Flyway owns schema
 changes, and Hibernate checks that the entity mappings match the migrated schema.
-Add future changes as new versioned scripts; do not edit a migration after it has
-been applied to a database.
+Migration V5 adds component-level vehicle service history and loads starter data:
+six vehicles (two per vehicle class), six drivers, nine freight items, and three
+planned routes, including Cluj-Napoca to Brasov. Six freight items remain
+unassigned at the warehouse. The starter route distances and travel times are
+illustrative estimates.
+
+The Vue app uses `VITE_API_BASE_URL` when set and otherwise calls
+`http://localhost:8080/api`. The backend exposes `/api/config` so the frontend
+uses the same configured warehouse/depot location as route planning.
 
 ## Route lifecycle
 
-The route-planning depot defaults to `Cluj-Napoca, Romania`. Set `DEPOT_CITY` in
-the backend environment to override it; no API key is required. Set
+The warehouse and route-planning depot default to `Cluj-Napoca, Romania`. Set
+`WAREHOUSE_CITY` in the backend environment to override it; `DEPOT_CITY` remains
+supported as a fallback. No API key is required. Set
 `NOMINATIM_USER_AGENT` to `SmartLogisticsHub/1.0 (contact: you@example.com)`.
 Pickup and delivery fields accept city names. The backend geocodes city locations
 with OpenStreetMap's Nominatim service, caches
@@ -55,6 +69,26 @@ of the driver's physical location. Cancelling a planned route releases its
 assigned goods immediately; cancelling an active route releases undelivered
 goods but keeps the driver, vehicle, and trailer unavailable until the estimated
 return time.
+
+## Vehicle maintenance
+
+Every maintenance operation is stored with its component, performed date, and
+vehicle odometer reading. Component intervals use the conservative lower bound
+from the supplied interval ranges. When both distance and time limits apply,
+the lower remaining health is shown. Entries that are conditional (for example,
+“as needed” or “engine overhaul”) retain service history but do not display an
+invented percentage. Engine-hour limits are shown as notes because engine hours
+are not currently tracked.
+
+Vehicles at or below 10% on any healthbar are automatically marked
+`MAINTENANCE`, removed from route selection, and rejected by the route API. A
+vehicle already in transit is flagged for maintenance after its return instead
+of interrupting an active route. Record completed work with
+`POST /api/vehicles/{id}/maintenance` and body
+`{"componentKey":"engine-oil-filter","performedAt":"2026-10-01T08:00:00Z","odometerKm":123456}`.
+The date and odometer are the values from when the operation actually took
+place. Vehicles without service history for a fixed-interval component remain
+unavailable until that operation is recorded.
 
 `DELETE /api/routes/{id}` is limited to `PLANNED` and `CANCELLED` routes.
 Deleting a planned route releases its assigned freight back to `UNASSIGNED`.

@@ -24,6 +24,7 @@ import ro.logistics.smart_logistics.vehicle.application.InvalidVehicleStatusExce
 import ro.logistics.smart_logistics.vehicle.application.VehicleInUseException;
 import ro.logistics.smart_logistics.vehicle.application.VehicleNotFoundException;
 import ro.logistics.smart_logistics.vehicle.application.VehicleScheduledException;
+import ro.logistics.smart_logistics.maintenance.application.InvalidMaintenanceOperationException;
 
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -87,8 +88,8 @@ public class ApiExceptionHandler {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 
-    @ExceptionHandler(InvalidVehicleStatusException.class)
-    public ResponseEntity<ApiError> handleInvalidVehicleStatus(InvalidVehicleStatusException exception) {
+    @ExceptionHandler({InvalidVehicleStatusException.class, InvalidMaintenanceOperationException.class})
+    public ResponseEntity<ApiError> handleInvalidVehicleStatus(RuntimeException exception) {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 

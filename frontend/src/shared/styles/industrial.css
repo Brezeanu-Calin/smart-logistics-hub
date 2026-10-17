@@ -288,10 +288,17 @@ tbody tr:hover { background: #1f2428; }
 .health-components { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; padding-top: 10px; }
 .health-component > div:first-child { display: flex; justify-content: space-between; margin-bottom: 5px; color: #d1d5db; font-size: 9px; }
 .health-component > div:first-child strong { color: var(--text); font: 700 9px "JetBrains Mono", Consolas, monospace; }
+.history-only { color: #9ca3af; font: 8px "JetBrains Mono", Consolas, monospace; }
 .health-track { height: 7px; border: 1px solid #374151; background: #0d0f11; }
 .health-track span { display: block; height: 100%; }
 .health-track .healthy { background: var(--green); }.health-track .caution { background: var(--yellow); }.health-track .critical { background: var(--red); }
 .health-component > small { display: block; margin-top: 5px; color: #7b8490; font: 7px "JetBrains Mono", Consolas, monospace; }
+.health-component > .missing-service { color: #f87171; }
+.maintenance-entry { margin-top: 7px; }
+.maintenance-entry summary { color: var(--yellow); cursor: pointer; font: 8px "JetBrains Mono", Consolas, monospace; text-transform: uppercase; }
+.maintenance-input { display: grid; gap: 4px; margin-top: 6px; color: #9ca3af; font: 7px "JetBrains Mono", Consolas, monospace; }
+.maintenance-input input { width: 100%; min-width: 0; border: 1px solid #374151; border-radius: 0; padding: 5px; color: var(--text); background: #0d0f11; font-size: 8px; }
+.maintenance-entry .service-button { margin-top: 6px; font-size: 8px; }
 .maintenance-lower { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .maintenance-lower .panel { min-width: 0; }
 .workshop-row, .dtc-row { display: flex; align-items: center; gap: 9px; min-height: 54px; border-bottom: 1px solid var(--line); padding: 8px 11px; }

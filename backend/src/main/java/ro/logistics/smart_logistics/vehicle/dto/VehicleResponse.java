@@ -2,6 +2,10 @@ package ro.logistics.smart_logistics.vehicle.dto;
 
 import ro.logistics.smart_logistics.vehicle.domain.VehicleStatus;
 import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
+import ro.logistics.smart_logistics.vehicle.domain.TransmissionType;
+import ro.logistics.smart_logistics.maintenance.dto.VehicleMaintenanceComponentResponse;
+
+import java.util.List;
 
 public record VehicleResponse(
         Long id,
@@ -13,6 +17,9 @@ public record VehicleResponse(
         Double maxWeightCapacityKg,
         Double maxVolumeM3,
         VehicleStatus status,
-        Integer currentMileageKm
+        Integer currentMileageKm,
+        TransmissionType transmissionType,
+        boolean maintenanceAutoTriggered,
+        List<VehicleMaintenanceComponentResponse> maintenanceComponents
 ) {
 }

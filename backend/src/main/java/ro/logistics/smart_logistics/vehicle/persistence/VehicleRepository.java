@@ -14,6 +14,10 @@ import java.util.Optional;
 public interface VehicleRepository extends JpaRepository<Vehicle, Long> {
     List<Vehicle> findAllByOrderByLicensePlateAsc();
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select v from Vehicle v order by v.licensePlate asc")
+    List<Vehicle> findAllForUpdate();
+
     boolean existsByLicensePlateIgnoreCase(String licensePlate);
 
     boolean existsByLicensePlateIgnoreCaseAndIdNot(String licensePlate, Long id);

@@ -25,6 +25,7 @@ import ro.logistics.smart_logistics.vehicle.domain.Vehicle;
 import ro.logistics.smart_logistics.vehicle.domain.VehicleStatus;
 import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
 import ro.logistics.smart_logistics.vehicle.persistence.VehicleRepository;
+import ro.logistics.smart_logistics.maintenance.application.VehicleMaintenanceService;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -66,6 +67,8 @@ class RouteServiceTest {
     private EntityManager entityManager;
     @Mock
     private RouteDirectionsService directionsService;
+    @Mock
+    private VehicleMaintenanceService maintenanceService;
 
     @InjectMocks
     private RouteService routeService;

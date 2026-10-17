@@ -4,6 +4,7 @@ import ro.logistics.smart_logistics.vehicle.application.VehicleService;
 import ro.logistics.smart_logistics.vehicle.dto.VehicleRequest;
 import ro.logistics.smart_logistics.vehicle.dto.VehicleResponse;
 import ro.logistics.smart_logistics.vehicle.dto.VehicleStatusRequest;
+import ro.logistics.smart_logistics.maintenance.dto.VehicleMaintenanceOperationRequest;
 
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -61,6 +62,14 @@ public class VehicleController {
             @Valid @RequestBody VehicleStatusRequest request
     ) {
         return vehicleService.updateDispatcherManagedStatus(id, request.status());
+    }
+
+    @PostMapping("/{id}/maintenance")
+    public VehicleResponse recordMaintenanceOperation(
+            @PathVariable Long id,
+            @Valid @RequestBody VehicleMaintenanceOperationRequest request
+    ) {
+        return vehicleService.recordMaintenanceOperation(id, request);
     }
 
     @DeleteMapping("/{id}")

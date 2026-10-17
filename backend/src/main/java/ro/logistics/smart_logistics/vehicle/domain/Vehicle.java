@@ -52,7 +52,36 @@ public class Vehicle {
     @Column(nullable = false)
     private Integer currentMileageKm;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "transmission_type", nullable = false, length = 20)
+    private TransmissionType transmissionType;
+
+    @Column(name = "maintenance_auto_triggered", nullable = false)
+    private boolean maintenanceAutoTriggered;
+
     protected Vehicle() {
+    }
+
+    public Vehicle(
+            String licensePlate,
+            VehicleType vehicleType,
+            String make,
+            String model,
+            Integer year,
+            Double maxWeightCapacityKg,
+            Double maxVolumeM3,
+            Integer currentMileageKm,
+            TransmissionType transmissionType
+    ) {
+        this.licensePlate = licensePlate;
+        this.vehicleType = vehicleType;
+        this.make = make;
+        this.model = model;
+        this.year = year;
+        this.maxWeightCapacityKg = maxWeightCapacityKg;
+        this.maxVolumeM3 = maxVolumeM3;
+        this.currentMileageKm = currentMileageKm;
+        this.transmissionType = transmissionType;
     }
 
     public Vehicle(
@@ -65,14 +94,17 @@ public class Vehicle {
             Double maxVolumeM3,
             Integer currentMileageKm
     ) {
-        this.licensePlate = licensePlate;
-        this.vehicleType = vehicleType;
-        this.make = make;
-        this.model = model;
-        this.year = year;
-        this.maxWeightCapacityKg = maxWeightCapacityKg;
-        this.maxVolumeM3 = maxVolumeM3;
-        this.currentMileageKm = currentMileageKm;
+        this(
+                licensePlate,
+                vehicleType,
+                make,
+                model,
+                year,
+                maxWeightCapacityKg,
+                maxVolumeM3,
+                currentMileageKm,
+                vehicleType == VehicleType.VAN ? TransmissionType.MANUAL : TransmissionType.AMT
+        );
     }
 
     @PrePersist
@@ -91,7 +123,8 @@ public class Vehicle {
             Integer year,
             Double maxWeightCapacityKg,
             Double maxVolumeM3,
-            Integer currentMileageKm
+            Integer currentMileageKm,
+            TransmissionType transmissionType
     ) {
         this.licensePlate = licensePlate;
         this.vehicleType = vehicleType;
@@ -101,6 +134,30 @@ public class Vehicle {
         this.maxWeightCapacityKg = maxWeightCapacityKg;
         this.maxVolumeM3 = maxVolumeM3;
         this.currentMileageKm = currentMileageKm;
+        this.transmissionType = transmissionType;
+    }
+
+    public void updateDetails(
+            String licensePlate,
+            VehicleType vehicleType,
+            String make,
+            String model,
+            Integer year,
+            Double maxWeightCapacityKg,
+            Double maxVolumeM3,
+            Integer currentMileageKm
+    ) {
+        updateDetails(
+                licensePlate,
+                vehicleType,
+                make,
+                model,
+                year,
+                maxWeightCapacityKg,
+                maxVolumeM3,
+                currentMileageKm,
+                vehicleType == VehicleType.VAN ? TransmissionType.MANUAL : TransmissionType.AMT
+        );
     }
 
     public void updateDispatcherManagedStatus(VehicleStatus status) {
@@ -108,6 +165,7 @@ public class Vehicle {
             throw new IllegalArgumentException("IN_TRANSIT is managed by route assignment.");
         }
         this.status = status;
+        this.maintenanceAutoTriggered = false;
     }
 
     public void markInTransit() {
@@ -115,11 +173,29 @@ public class Vehicle {
     }
 
     public void markAvailable() {
-        this.status = VehicleStatus.AVAILABLE;
+        this.status = maintenanceAutoTriggered ? VehicleStatus.MAINTENANCE : VehicleStatus.AVAILABLE;
     }
 
     public void markMaintenance() {
         this.status = VehicleStatus.MAINTENANCE;
+    }
+
+    public void markAutomaticMaintenance() {
+        this.maintenanceAutoTriggered = true;
+        if (status != VehicleStatus.IN_TRANSIT) {
+            this.status = VehicleStatus.MAINTENANCE;
+        }
+    }
+
+    public void clearAutomaticMaintenance() {
+        this.maintenanceAutoTriggered = false;
+        if (status == VehicleStatus.MAINTENANCE) {
+            this.status = VehicleStatus.AVAILABLE;
+        }
+    }
+
+    public void setMaintenanceAutoTriggered(boolean maintenanceAutoTriggered) {
+        this.maintenanceAutoTriggered = maintenanceAutoTriggered;
     }
 
     public Long getId() {
@@ -160,5 +236,13 @@ public class Vehicle {
 
     public Integer getCurrentMileageKm() {
         return currentMileageKm;
+    }
+
+    public TransmissionType getTransmissionType() {
+        return transmissionType;
+    }
+
+    public boolean isMaintenanceAutoTriggered() {
+        return maintenanceAutoTriggered;
     }
 }

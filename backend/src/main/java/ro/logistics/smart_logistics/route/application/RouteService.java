@@ -29,6 +29,7 @@ import ro.logistics.smart_logistics.vehicle.domain.Vehicle;
 import ro.logistics.smart_logistics.vehicle.domain.VehicleStatus;
 import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
 import ro.logistics.smart_logistics.vehicle.persistence.VehicleRepository;
+import ro.logistics.smart_logistics.maintenance.application.VehicleMaintenanceService;
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
@@ -58,6 +59,7 @@ public class RouteService {
     private final GoodsRepository goodsRepository;
     private final EntityManager entityManager;
     private final RouteDirectionsService directionsService;
+    private final VehicleMaintenanceService maintenanceService;
 
     public RouteService(
             RouteRepository routeRepository,
@@ -66,7 +68,8 @@ public class RouteService {
             TrailerRepository trailerRepository,
             GoodsRepository goodsRepository,
             EntityManager entityManager,
-            RouteDirectionsService directionsService
+            RouteDirectionsService directionsService,
+            VehicleMaintenanceService maintenanceService
     ) {
         this.routeRepository = routeRepository;
         this.driverRepository = driverRepository;
@@ -75,6 +78,7 @@ public class RouteService {
         this.goodsRepository = goodsRepository;
         this.entityManager = entityManager;
         this.directionsService = directionsService;
+        this.maintenanceService = maintenanceService;
     }
 
     @Transactional(readOnly = true)
@@ -427,7 +431,8 @@ public class RouteService {
         }
     }
 
-    private static void ensureResourcesEligibleForPlanning(Driver driver, Vehicle vehicle) {
+    private void ensureResourcesEligibleForPlanning(Driver driver, Vehicle vehicle) {
+        maintenanceService.updateAutomaticMaintenanceState(vehicle, OffsetDateTime.now());
         if (driver.getStatus() == DriverStatus.ON_LEAVE) {
             throw new RouteConflictException("A driver on leave cannot be assigned to a route.");
         }
