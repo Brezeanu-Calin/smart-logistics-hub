@@ -9,8 +9,8 @@ CREATE TABLE geocoded_addresses (
 
 ALTER TABLE route_stops ADD latitude FLOAT(53) NULL;
 ALTER TABLE route_stops ADD longitude FLOAT(53) NULL;
-ALTER TABLE route_stops ADD CONSTRAINT ck_route_stops_coordinates
-    CHECK ((latitude IS NULL AND longitude IS NULL) OR (latitude IS NOT NULL AND longitude IS NOT NULL));
+EXEC(N'ALTER TABLE route_stops ADD CONSTRAINT ck_route_stops_coordinates
+    CHECK ((latitude IS NULL AND longitude IS NULL) OR (latitude IS NOT NULL AND longitude IS NOT NULL));');
 
 CREATE TABLE route_geometry_points (
     id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
