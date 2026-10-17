@@ -13,7 +13,23 @@ import api, {
   type VehicleRequest,
 } from '../api'
 
-type Section = 'overview' | 'routes' | 'freight' | 'drivers' | 'vehicles'
+type Section = 'overview' | 'routes' | 'freight' | 'drivers' | 'fleet' | 'maintenance'
+type DemoContract = {
+  reference: string
+  client: string
+  category: 'HEAVY HAUL' | 'GENERAL' | 'REFRIGERATED' | 'ADR'
+  pickup: string
+  delivery: string
+  departure: string
+  departureSort: number
+  distanceKm: number
+  revenueEur: number
+}
+type HealthComponent = {
+  key: string
+  label: string
+  serviceIntervalKm: number
+}
 
 const section = ref<Section>('overview')
 const drivers = ref<Driver[]>([])
@@ -54,16 +70,86 @@ const routeForm = reactive({
 })
 const selectedGoodsIds = ref<number[]>([])
 const expandedRouteMaps = ref(new Set<number>())
+const selectedVehicleId = ref<number | null>(null)
+const contractCategory = ref('ALL')
+const contractSort = ref<'RATE' | 'REVENUE' | 'DEPARTURE'>('RATE')
+const fleetSort = ref<'CLASS' | 'MILEAGE' | 'STATUS'>('CLASS')
+const demoContracts: DemoContract[] = [
+  { reference: 'HM-2048', client: 'NorthSea Energy', category: 'HEAVY HAUL', pickup: 'Rotterdam', delivery: 'Munich', departure: 'Today · 18:00', departureSort: 1, distanceKm: 824, revenueEur: 7420 },
+  { reference: 'HM-2052', client: 'Bavaria Components', category: 'GENERAL', pickup: 'Utrecht', delivery: 'Stuttgart', departure: 'Tomorrow · 06:30', departureSort: 2, distanceKm: 637, revenueEur: 2860 },
+  { reference: 'HM-2057', client: 'Frostline Foods', category: 'REFRIGERATED', pickup: 'Eindhoven', delivery: 'Frankfurt', departure: 'Tomorrow · 09:00', departureSort: 3, distanceKm: 392, revenueEur: 2050 },
+  { reference: 'HM-2061', client: 'RheinChem GmbH', category: 'ADR', pickup: 'Antwerp', delivery: 'Cologne', departure: '18 Oct · 13:00', departureSort: 4, distanceKm: 214, revenueEur: 1760 },
+]
+const healthComponents: HealthComponent[] = [
+  { key: 'tyres', label: 'Tyres', serviceIntervalKm: 80000 },
+  { key: 'suspension', label: 'Suspension', serviceIntervalKm: 120000 },
+  { key: 'engine', label: 'Engine', serviceIntervalKm: 60000 },
+  { key: 'transmission', label: 'Transmission', serviceIntervalKm: 100000 },
+]
 
 const activeRoutes = computed(() => routes.value.filter((route) => route.status === 'ACTIVE').length)
 const availableDrivers = computed(() => drivers.value.filter((driver) => driver.status === 'AVAILABLE').length)
 const availableVehicles = computed(() => vehicles.value.filter((vehicle) => vehicle.status === 'AVAILABLE').length)
+const selectedVehicle = computed(() =>
+  vehicles.value.find((vehicle) => vehicle.id === selectedVehicleId.value) ?? vehicles.value[0] ?? null,
+)
+const sortedVehicles = computed(() => [...vehicles.value].sort((first, second) => {
+  if (fleetSort.value === 'MILEAGE') return second.currentMileageKm - first.currentMileageKm
+  if (fleetSort.value === 'STATUS') return first.status.localeCompare(second.status)
+  return first.vehicleType.localeCompare(second.vehicleType) || first.licensePlate.localeCompare(second.licensePlate)
+}))
+const visibleContracts = computed(() => {
+  const filtered = demoContracts.filter((contract) =>
+    contractCategory.value === 'ALL' || contract.category === contractCategory.value,
+  )
+  return filtered.sort((first, second) => {
+    if (contractSort.value === 'REVENUE') return second.revenueEur - first.revenueEur
+    if (contractSort.value === 'DEPARTURE') return first.departureSort - second.departureSort
+    return (second.revenueEur / second.distanceKm) - (first.revenueEur / first.distanceKm)
+  })
+})
 const unassignedGoods = computed(() => goods.value.filter((item) => item.status === 'UNASSIGNED'))
 const selectedGoods = computed(() =>
   selectedGoodsIds.value
     .map((id) => goods.value.find((item) => item.id === id))
     .filter((item): item is Goods => item !== undefined),
 )
+const screenTitle = computed(() => ({
+  overview: 'Overview',
+  routes: 'Route Planner & Dispatch',
+  freight: 'Freight Jobs & Loads',
+  drivers: 'Drivers',
+  fleet: 'Fleet Operations & Telemetry',
+  maintenance: 'Maintenance & Diagnostics',
+})[section.value])
+
+function componentHealth(vehicle: Vehicle, component: HealthComponent) {
+  const simulatedServiceMileage = Math.floor(vehicle.currentMileageKm / component.serviceIntervalKm) * component.serviceIntervalKm
+  const kmSinceService = vehicle.currentMileageKm - simulatedServiceMileage
+  const simulatedDaysSinceService = 24 + ((vehicle.id * 31) % 300)
+  return Math.max(0, Math.round(100 - (kmSinceService / component.serviceIntervalKm) * 70 - (simulatedDaysSinceService / 365) * 30))
+}
+
+function healthClass(health: number) {
+  return health > 65 ? 'healthy' : health > 35 ? 'caution' : 'critical'
+}
+
+function healthServiceAge(vehicle: Vehicle) {
+  return 24 + ((vehicle.id * 31) % 300)
+}
+
+function assignedDriver(vehicleId: number) {
+  const route = routes.value.find((item) =>
+    item.vehicleId === vehicleId && (
+      item.status === 'PLANNED'
+      || item.status === 'ACTIVE'
+      || ((item.status === 'COMPLETED' || item.status === 'CANCELLED') && item.estimatedReturnTime !== null && !item.returnedAt)
+    ),
+  )
+  if (!route) return '—'
+  const driverState = route.status === 'ACTIVE' ? 'ON ROUTE' : route.status === 'PLANNED' ? 'PLANNED' : 'RETURNING'
+  return `${route.driverName} · ${driverState}`
+}
 
 function clearMessages() {
   error.value = ''
@@ -86,6 +172,9 @@ async function loadData() {
   ])
   drivers.value = driverResponse.data
   vehicles.value = vehicleResponse.data
+  if (!vehicles.value.some((vehicle) => vehicle.id === selectedVehicleId.value)) {
+    selectedVehicleId.value = vehicles.value[0]?.id ?? null
+  }
   goods.value = goodsResponse.data
   routes.value = routeResponse.data
 }
@@ -164,6 +253,7 @@ function resetVehicleForm() {
 
 function editVehicle(vehicle: Vehicle) {
   editingVehicleId.value = vehicle.id
+  selectedVehicleId.value = vehicle.id
   Object.assign(vehicleForm, {
     licensePlate: vehicle.licensePlate,
     vehicleType: vehicle.vehicleType,
@@ -174,7 +264,7 @@ function editVehicle(vehicle: Vehicle) {
     maxVolumeM3: vehicle.maxVolumeM3,
     currentMileageKm: vehicle.currentMileageKm,
   })
-  section.value = 'vehicles'
+  section.value = 'fleet'
 }
 
 async function saveVehicle() {
@@ -395,27 +485,28 @@ routeForm.departureLocal = defaultDepartureTime()
   <main class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="#" @click.prevent="section = 'overview'">
-        <span class="brand-mark">SL</span>
-        <span><strong>Smart Logistics</strong><small>Operations hub</small></span>
+        <span class="brand-mark"><svg viewBox="0 0 48 32" aria-hidden="true"><path d="M2 5h27v19H2zM29 11h9l8 8v5H29zM33 13v6h9" /><circle cx="11" cy="26" r="3" /><circle cx="37" cy="26" r="3" /><path d="M7 11h7m-7 5h12" /></svg></span>
+        <span><strong>HAULMASTER</strong><small>Dispatch console</small></span>
       </a>
       <nav class="side-nav" aria-label="Main navigation">
         <button :class="{ selected: section === 'overview' }" @click="section = 'overview'"><span>▦</span> Overview</button>
-        <button :class="{ selected: section === 'routes' }" @click="section = 'routes'"><span>↗</span> Routes <b>{{ activeRoutes }}</b></button>
-        <button :class="{ selected: section === 'freight' }" @click="section = 'freight'"><span>▣</span> Freight</button>
+        <button :class="{ selected: section === 'routes' }" @click="section = 'routes'"><span>↗</span> Route Planner <b>{{ activeRoutes }}</b></button>
+        <button :class="{ selected: section === 'fleet' }" @click="section = 'fleet'"><span>▰</span> Fleet Ops</button>
+        <button :class="{ selected: section === 'freight' }" @click="section = 'freight'"><span>▣</span> Freight Jobs</button>
+        <button :class="{ selected: section === 'maintenance' }" @click="section = 'maintenance'"><span>⚒</span> Maintenance</button>
         <button :class="{ selected: section === 'drivers' }" @click="section = 'drivers'"><span>♙</span> Drivers</button>
-        <button :class="{ selected: section === 'vehicles' }" @click="section = 'vehicles'"><span>▰</span> Vehicles</button>
       </nav>
       <div class="sidebar-note">
         <span class="note-icon">i</span>
-        <div><strong>AI freight entry</strong><p>Manual entry is enabled. AI assistant integration can be added later.</p></div>
+        <div><strong>DEMO PANELS</strong><p>Demo telemetry and maintenance estimates are illustrative, not live vehicle data.</p></div>
       </div>
-      <div class="sidebar-footer">SMART LOGISTICS HUB <span>v1.0</span></div>
+      <div class="sidebar-footer">HAULMASTER DISPATCH <span>v1.0</span></div>
     </aside>
 
     <section class="main-panel">
       <header class="topbar">
-        <div class="crumb">Workspace <span>/</span> {{ section === 'overview' ? 'Overview' : section }}</div>
-        <div class="topbar-right"><span class="live-dot"></span> Operations online <button class="refresh-button" :disabled="busy" @click="refresh" aria-label="Refresh data">↻</button></div>
+        <div class="crumb">HAULMASTER <span>/</span> {{ screenTitle }}</div>
+        <div class="topbar-right"><span class="live-dot"></span> GPS LOCK · DEMO <button class="refresh-button" :disabled="busy" @click="refresh" aria-label="Refresh data">↻</button></div>
       </header>
 
       <div class="content">
@@ -441,12 +532,36 @@ routeForm.departureLocal = defaultDepartureTime()
           <div class="quick-grid">
             <button class="quick-card" @click="section = 'freight'"><span class="quick-icon orange">＋</span><span><strong>Add freight</strong><small>Register an incoming shipment</small></span><b>→</b></button>
             <button class="quick-card" @click="section = 'drivers'"><span class="quick-icon green">＋</span><span><strong>Add a driver</strong><small>Update your available workforce</small></span><b>→</b></button>
-            <button class="quick-card" @click="section = 'vehicles'"><span class="quick-icon blue">＋</span><span><strong>Add a vehicle</strong><small>Register fleet capacity</small></span><b>→</b></button>
+            <button class="quick-card" @click="section = 'fleet'"><span class="quick-icon blue">＋</span><span><strong>Add a vehicle</strong><small>Register fleet capacity</small></span><b>→</b></button>
           </div>
         </template>
 
         <template v-else-if="section === 'routes'">
-          <div class="page-heading"><div><p class="eyebrow">DISPATCH</p><h1>Routes</h1><p class="subtitle">Plan journeys, track delivery progress, and manage returns.</p></div></div>
+          <div class="page-heading"><div><p class="eyebrow">ROUTE PLANNER / DISPATCH</p><h1>Route Planner &amp; Dispatch</h1><p class="subtitle">Sequence multi-stop freight, review route conditions, and manage return estimates.</p></div><span class="demo-flag">ROUTE SCENARIO · DEMO</span></div>
+          <section class="panel tactical-panel">
+            <div class="panel-heading"><div><h2>Heavy-haul corridor · Rotterdam → Munich</h2><p>Illustrative route scenario · wind turbine blade · 42.5 T · Not connected to live GPS</p></div><span class="status-pill warning">2 HAZARDS</span></div>
+            <div class="tactical-grid">
+              <div class="tactical-map" role="img" aria-label="Illustrative route diagram from Rotterdam through Kassel to Munich">
+                <div class="map-grid"></div><span class="map-label map-rotterdam">ROTTERDAM</span><span class="map-label map-kassel">KASSEL HILLS</span><span class="map-label map-nuremberg">NUREMBERG</span><span class="map-label map-munich">MUNICH</span>
+                <svg viewBox="0 0 700 300" preserveAspectRatio="none" aria-hidden="true"><path class="road-line" d="M30 242 C110 220 110 170 194 184 S285 124 370 145 S448 76 520 97 S612 122 670 39"/><path class="haul-line" d="M30 242 C110 220 110 170 194 184 S285 124 370 145 S448 76 520 97 S612 122 670 39"/></svg>
+                <span class="waypoint waypoint-a">01</span><span class="waypoint waypoint-b">02</span><span class="waypoint waypoint-c">03</span><span class="waypoint waypoint-d">04</span>
+                <span class="rig-tag"><i></i> DEMO RIG · 62 KM/H</span>
+                <div class="map-legend">SCHEMATIC ROUTE · NO LIVE POSITION</div>
+              </div>
+              <aside class="route-intel">
+                <div class="intel-title">WAYPOINT SEQUENCE <span>04 STOPS</span></div>
+                <div class="waypoint-row"><b>01</b><span><strong>Rotterdam, NL</strong><small>DEPOT · LOAD CHECK</small></span><em>ORIGIN</em></div>
+                <div class="waypoint-row hazard-row"><b>02</b><span><strong>Kassel Hills, DE</strong><small>STEEP INCLINE · LOW-BRIDGE BYPASS</small></span><em>CAUTION</em></div>
+                <div class="waypoint-row"><b>03</b><span><strong>Nuremberg, DE</strong><small>FUEL · STATUTORY REST</small></span><em>REST</em></div>
+                <div class="waypoint-row"><b>04</b><span><strong>Munich, DE</strong><small>DELIVERY · CLEARANCE CHECK</small></span><em>DEST.</em></div>
+                <div class="corridor-alert"><strong>OVERSIZE LOAD</strong><span>Clearance and permits shown as demo checks only.</span></div>
+              </aside>
+            </div>
+            <div class="analytics-strip">
+              <div><small>DISTANCE</small><strong>824 <i>KM</i></strong></div><div><small>EST. FUEL</small><strong>286 <i>L · DEMO</i></strong></div><div><small>TOLLS</small><strong>€ 412 <i>EST.</i></strong></div><div><small>LEGAL DRIVE</small><strong>09:00 <i>H · DEMO</i></strong></div>
+              <div class="elevation"><small>ELEVATION PROFILE · SCHEMATIC</small><svg viewBox="0 0 330 45" preserveAspectRatio="none" aria-label="Illustrative elevation profile"><path d="M0 39 L32 34 L55 36 L83 23 L109 29 L139 12 L161 18 L191 5 L215 20 L244 14 L271 29 L302 25 L330 36" /></svg></div>
+            </div>
+          </section>
           <section class="panel form-panel">
             <div class="panel-heading"><div><h2>Plan a route</h2><p>Cities are geocoded with Nominatim and routed by OSRM.</p></div><span class="form-step">NEW ROUTE</span></div>
             <form class="form-grid route-form" @submit.prevent="createRoute">
@@ -475,7 +590,15 @@ routeForm.departureLocal = defaultDepartureTime()
         </template>
 
         <template v-else-if="section === 'freight'">
-          <div class="page-heading"><div><p class="eyebrow">SHIPMENTS</p><h1>Freight</h1><p class="subtitle">Register goods manually and assign them to delivery routes.</p></div></div>
+          <div class="page-heading"><div><p class="eyebrow">FREIGHT JOBS / LOADS</p><h1>Freight Jobs &amp; Loads</h1><p class="subtitle">Browse sample contracts and manage freight assigned through the live logistics API.</p></div><span class="demo-flag">CONTRACT BOARD · DEMO DATA</span></div>
+          <section class="panel">
+            <div class="panel-heading"><div><h2>Freight market board</h2><p>Sample opportunities · not bookable · values are illustrative</p></div><div class="market-controls"><select v-model="contractCategory" aria-label="Filter contracts by category"><option value="ALL">All cargo</option><option value="HEAVY HAUL">Heavy haul</option><option value="GENERAL">General</option><option value="REFRIGERATED">Refrigerated</option><option value="ADR">ADR</option></select><select v-model="contractSort" aria-label="Sort contracts"><option value="RATE">Sort: €/km</option><option value="REVENUE">Sort: revenue</option><option value="DEPARTURE">Sort: departure</option></select></div></div>
+            <div class="table-wrap"><table><thead><tr><th>CONTRACT</th><th>CARGO</th><th>LANE</th><th>DEPARTURE</th><th>DISTANCE</th><th>REVENUE</th><th>RATE</th></tr></thead><tbody><tr v-for="contract in visibleContracts" :key="contract.reference"><td><strong>{{ contract.reference }}</strong><small>{{ contract.client }}</small></td><td><span class="status-pill warning">{{ contract.category }}</span></td><td>{{ contract.pickup }} → {{ contract.delivery }}</td><td>{{ contract.departure }}</td><td>{{ contract.distanceKm.toLocaleString() }} KM</td><td>€ {{ contract.revenueEur.toLocaleString() }}</td><td class="rate-cell">€ {{ (contract.revenueEur / contract.distanceKm).toFixed(2) }}</td></tr></tbody></table></div>
+          </section>
+          <section class="panel envelope-panel">
+            <div class="panel-heading"><div><h2>Load envelope inspector</h2><p>Sample cargo profile · compatibility and route checks are illustrative only</p></div><span class="demo-flag">DEMO LOAD</span></div>
+            <div class="envelope-grid"><div class="cargo-envelope"><div class="cargo-outline"><span>OVERSIZE LOAD</span><strong>TRANSFORMER</strong><small>54,000 KG · 8.4 × 3.6 × 4.1 M</small></div><div class="envelope-dimensions"><span>↔ 8.4 M</span><span>↕ 4.1 M</span></div></div><div class="envelope-data"><div><small>ELIGIBLE TRACTOR</small><strong>Scania R730 8×4 <span>vs.</span> Actros SLT</strong></div><div><small>ESTIMATED NET MARGIN</small><strong class="good-text">€ 1,284 · 17.3%</strong></div><div><small>COMPLIANCE CHECKLIST</small><strong>✓ Axle load · ✓ Route clearance · ! Permit review <em>DEMO</em></strong></div></div></div>
+          </section>
           <section class="panel form-panel">
             <div class="panel-heading"><div><h2>{{ editingGoodsId === null ? 'Add freight' : 'Edit freight' }}</h2><p>Tracking codes are generated automatically.</p></div><button v-if="editingGoodsId !== null" class="text-button" @click="resetGoodsForm">Discard changes</button></div>
             <form class="form-grid two-column" @submit.prevent="saveGoods">
@@ -503,14 +626,47 @@ routeForm.departureLocal = defaultDepartureTime()
           <section class="panel"><div class="panel-heading"><div><h2>Driver roster</h2><p>{{ drivers.length }} drivers registered</p></div></div><div v-if="!drivers.length" class="empty-state"><strong>No drivers registered</strong><p>Add drivers to make them available for route planning.</p></div><div v-else class="table-wrap"><table><thead><tr><th>DRIVER</th><th>LICENSES</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="driver in drivers" :key="driver.id"><td><strong>{{ driver.name }}</strong><small>{{ driver.email }}</small></td><td><span v-for="license in driver.licenseCategories" :key="license" class="license-chip">{{ license }}</span></td><td><span class="status-pill" :class="driver.status.toLowerCase()">{{ formatStatus(driver.status) }}</span></td><td><div class="row-actions"><button v-if="!isDriverScheduled(driver.id) && driver.status !== 'IN_TRANSIT' && driver.status !== 'RETURNING'" class="text-button" @click="editDriver(driver)">Edit</button><select v-if="!isDriverScheduled(driver.id) && (driver.status === 'AVAILABLE' || driver.status === 'ON_LEAVE')" class="compact-select" :value="driver.status" aria-label="Driver availability" @change="updateDriverStatus(driver, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'ON_LEAVE')"><option value="AVAILABLE">Available</option><option value="ON_LEAVE">On leave</option></select><button class="text-button danger-text" :disabled="driver.status === 'IN_TRANSIT' || driver.status === 'RETURNING' || hasDriverRoute(driver.id)" :title="hasDriverRoute(driver.id) ? 'Route history references this driver' : ''" @click="deleteDriver(driver)">Delete</button></div></td></tr></tbody></table></div></section>
         </template>
 
-        <template v-else>
-          <div class="page-heading"><div><p class="eyebrow">FLEET</p><h1>Vehicles</h1><p class="subtitle">Maintain vehicle capacity, mileage, and operational status.</p></div></div>
+        <template v-else-if="section === 'fleet'">
+          <div class="page-heading"><div><p class="eyebrow">FLEET OPERATIONS / TELEMETRY</p><h1>Fleet Operations &amp; Telemetry</h1><p class="subtitle">Live fleet records with a clearly marked sample telemetry console.</p></div><span class="demo-flag">TELEMETRY · DEMO FEED</span></div>
+          <div class="fleet-command-grid">
+            <article class="command-metric"><small>UNITS ON ROUTE</small><strong>84<span> / 96</span></strong><em>Illustrative fleet snapshot</em></article>
+            <article class="command-metric"><small>AVG. FLEET SPEED</small><strong>68<span> KM/H</span></strong><em>Sample telemetry · not live</em></article>
+            <article class="command-metric"><small>CUMULATIVE DIESEL</small><strong>12,480<span> L</span></strong><em>Sample telemetry · today</em></article>
+            <article class="command-metric command-alert"><small>ROAD HAZARDS</small><strong>03<span> OPEN</span></strong><em>2 route cautions · 1 weather</em></article>
+          </div>
+          <section class="telemetry-grid">
+            <article class="panel telemetry-panel">
+              <div class="panel-heading"><div><h2>Unit inspection · sample feed</h2><p>{{ selectedVehicle ? `${selectedVehicle.licensePlate} · ${selectedVehicle.make} ${selectedVehicle.model}` : 'No registered unit selected' }}</p></div><div class="market-controls"><select v-if="vehicles.length" v-model.number="selectedVehicleId" aria-label="Select vehicle for inspection"><option v-for="vehicle in vehicles" :key="vehicle.id" :value="vehicle.id">{{ vehicle.licensePlate }}</option></select><span class="demo-flag">DEMO</span></div></div>
+              <div v-if="selectedVehicle" class="engine-console">
+                <div class="engine-gauges"><div class="gauge"><span>ENGINE SPEED</span><strong>1,480 <i>RPM</i></strong><div class="gauge-track"><b style="width: 48%"></b></div></div><div class="gauge"><span>TURBO BOOST</span><strong>1.8 <i>BAR</i></strong><div class="gauge-track"><b style="width: 62%"></b></div></div><div class="gauge"><span>OIL TEMP</span><strong>92 <i>°C</i></strong><div class="gauge-track"><b style="width: 58%"></b></div></div><div class="gauge"><span>COOLANT</span><strong>84 <i>°C</i></strong><div class="gauge-track"><b style="width: 53%"></b></div></div></div>
+                <div class="inspection-foot"><span>ECO SCORE <strong>87 / 100</strong></span><span>GEAR <strong>{{ selectedVehicle ? `${(selectedVehicle.id % 12) + 1}A · DEMO` : '—' }}</strong></span><span>CB / DISPATCH <strong>CH 12 · SAMPLE</strong></span><button class="secondary-button" @click="section = 'maintenance'">Open diagnostics</button></div>
+              </div>
+              <div v-else class="empty-state"><strong>No vehicles available</strong><p>Add a vehicle to populate fleet operations.</p></div>
+            </article>
+            <aside class="panel hazard-feed"><div class="panel-heading"><div><h2>Road hazard attention</h2><p>Illustrative operational feed</p></div><span class="status-pill warning">DEMO</span></div><div class="feed-item critical-feed"><b>!</b><span><strong>Kassel Hills · steep incline</strong><small>Heavy-haul corridor · route scenario</small></span><time>08:42</time></div><div class="feed-item warning-feed"><b>!</b><span><strong>Low bridge bypass · A7</strong><small>Clearance review recommended</small></span><time>08:15</time></div><div class="feed-item"><b>i</b><span><strong>Wet road advisory · Bavaria</strong><small>Weather sample · no live feed</small></span><time>07:58</time></div></aside>
+          </section>
           <section class="panel form-panel"><div class="panel-heading"><div><h2>{{ editingVehicleId === null ? 'Add a vehicle' : 'Edit vehicle' }}</h2><p>Fleet capacity is checked automatically when planning routes.</p></div><button v-if="editingVehicleId !== null" class="text-button" @click="resetVehicleForm">Discard changes</button></div>
             <form class="form-grid three-column" @submit.prevent="saveVehicle"><label>License plate<input v-model.trim="vehicleForm.licensePlate" maxlength="20" required></label><label>Vehicle type<select v-model="vehicleForm.vehicleType"><option value="VAN">Van</option><option value="RIGID_TRUCK">Rigid truck</option><option value="ARTICULATED_TRUCK">Articulated truck</option></select></label><label>Make<input v-model.trim="vehicleForm.make" maxlength="100" required></label><label>Model<input v-model.trim="vehicleForm.model" maxlength="100" required></label><label>Year<input v-model.number="vehicleForm.year" type="number" min="1900" max="2100" required></label><label>Mileage (km)<input v-model.number="vehicleForm.currentMileageKm" type="number" min="0" step="1" required></label><label>Max weight (kg)<input v-model.number="vehicleForm.maxWeightCapacityKg" type="number" min="0.01" step="0.01" required></label><label>Max volume (m³)<input v-model.number="vehicleForm.maxVolumeM3" type="number" min="0.01" step="0.01" required></label><div class="form-actions"><button class="primary-button" :disabled="busy">{{ editingVehicleId === null ? 'Add vehicle' : 'Save changes' }}</button></div></form>
           </section>
-          <section class="panel"><div class="panel-heading"><div><h2>Fleet register</h2><p>{{ vehicles.length }} vehicles registered</p></div></div><div v-if="!vehicles.length" class="empty-state"><strong>No vehicles registered</strong><p>Add a vehicle to start planning routes.</p></div><div v-else class="table-wrap"><table><thead><tr><th>VEHICLE</th><th>TYPE</th><th>CAPACITY</th><th>MILEAGE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="vehicle in vehicles" :key="vehicle.id"><td><strong>{{ vehicle.licensePlate }}</strong><small>{{ vehicle.make }} {{ vehicle.model }} · {{ vehicle.year }}</small></td><td>{{ formatStatus(vehicle.vehicleType) }}</td><td>{{ vehicle.maxWeightCapacityKg }} kg<small>{{ vehicle.maxVolumeM3 }} m³</small></td><td>{{ vehicle.currentMileageKm.toLocaleString() }} km</td><td><span class="status-pill" :class="vehicle.status.toLowerCase()">{{ formatStatus(vehicle.status) }}</span></td><td><div class="row-actions"><button v-if="!isVehicleScheduled(vehicle.id) && vehicle.status !== 'IN_TRANSIT'" class="text-button" @click="editVehicle(vehicle)">Edit</button><select v-if="!isVehicleScheduled(vehicle.id) && (vehicle.status === 'AVAILABLE' || vehicle.status === 'MAINTENANCE')" class="compact-select" :value="vehicle.status" aria-label="Vehicle status" @change="updateVehicleStatus(vehicle, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'MAINTENANCE')"><option value="AVAILABLE">Available</option><option value="MAINTENANCE">Maintenance</option></select><button class="text-button danger-text" :disabled="vehicle.status === 'IN_TRANSIT' || hasVehicleRoute(vehicle.id)" :title="hasVehicleRoute(vehicle.id) ? 'Route history references this vehicle' : ''" @click="deleteVehicle(vehicle)">Delete</button></div></td></tr></tbody></table></div></section>
+          <section class="panel">
+            <div class="panel-heading"><div><h2>Vehicle manifest</h2><p>{{ vehicles.length }} registered units · driver/status from route and fleet records</p></div><div class="market-controls"><label class="sort-label" for="fleet-sort">SORT BY</label><select id="fleet-sort" v-model="fleetSort" aria-label="Sort vehicle manifest"><option value="CLASS">Vehicle class</option><option value="MILEAGE">Mileage</option><option value="STATUS">Status</option></select></div></div>
+            <div v-if="!vehicles.length" class="empty-state"><strong>No vehicles registered</strong><p>Add a vehicle to start planning routes.</p></div>
+            <div v-else class="table-wrap"><table><thead><tr><th>VEHICLE</th><th>CLASS</th><th>ASSIGNED DRIVER</th><th>CAPACITY</th><th>MILEAGE</th><th>GEAR · DEMO</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="vehicle in sortedVehicles" :key="vehicle.id"><td><button class="text-button manifest-select" @click="selectedVehicleId = vehicle.id">{{ vehicle.licensePlate }}</button><small>{{ vehicle.make }} {{ vehicle.model }} · {{ vehicle.year }}</small></td><td>{{ formatStatus(vehicle.vehicleType) }}</td><td>{{ assignedDriver(vehicle.id) }}</td><td>{{ vehicle.maxWeightCapacityKg }} kg<small>{{ vehicle.maxVolumeM3 }} m³</small></td><td>{{ vehicle.currentMileageKm.toLocaleString() }} km</td><td><span class="demo-gear">{{ vehicle.status === 'IN_TRANSIT' ? `${(vehicle.id % 12) + 1}A` : '—' }}</span></td><td><span class="status-pill" :class="vehicle.status.toLowerCase()">{{ formatStatus(vehicle.status) }}</span></td><td><div class="row-actions"><button v-if="!isVehicleScheduled(vehicle.id) && vehicle.status !== 'IN_TRANSIT'" class="text-button" @click="editVehicle(vehicle)">Edit</button><select v-if="!isVehicleScheduled(vehicle.id) && (vehicle.status === 'AVAILABLE' || vehicle.status === 'MAINTENANCE')" class="compact-select" :value="vehicle.status" aria-label="Vehicle status" @change="updateVehicleStatus(vehicle, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'MAINTENANCE')"><option value="AVAILABLE">Available</option><option value="MAINTENANCE">Maintenance</option></select><button class="text-button danger-text" :disabled="vehicle.status === 'IN_TRANSIT' || hasVehicleRoute(vehicle.id)" :title="hasVehicleRoute(vehicle.id) ? 'Route history references this vehicle' : ''" @click="deleteVehicle(vehicle)">Delete</button></div></td></tr></tbody></table></div>
+          </section>
         </template>
-        <footer class="page-footer">Smart Logistics Hub <span>·</span> Routing and map data © OpenStreetMap contributors.</footer>
+        <template v-else>
+          <div class="page-heading"><div><p class="eyebrow">MAINTENANCE / DIAGNOSTICS</p><h1>Maintenance &amp; Diagnostics</h1><p class="subtitle">Illustrative component condition estimates and sample workshop queue.</p></div><span class="demo-flag">PLACEHOLDER HEALTH ESTIMATES</span></div>
+          <div class="maintenance-note"><strong>DEMO ESTIMATES ONLY</strong><span>Service history is not available from the backend. Health bars use each vehicle's current mileage plus a simulated time-since-service value; do not use for safety or repair decisions.</span></div>
+          <section class="panel"><div class="panel-heading"><div><h2>Vehicle component health</h2><p>Estimated condition by mileage and elapsed time since simulated service checkpoint</p></div><span class="status-pill warning">{{ vehicles.length }} UNITS</span></div>
+            <div v-if="!vehicles.length" class="empty-state"><strong>No vehicle health estimates</strong><p>Register vehicles to show illustrative health bars.</p></div>
+            <div v-else class="health-list"><article v-for="vehicle in vehicles" :key="vehicle.id" class="health-vehicle"><header><div><strong>{{ vehicle.licensePlate }}</strong><small>{{ vehicle.make }} {{ vehicle.model }} · {{ vehicle.currentMileageKm.toLocaleString() }} KM</small></div><span class="status-pill" :class="vehicle.status.toLowerCase()">{{ formatStatus(vehicle.status) }}</span></header><div class="health-components"><div v-for="component in healthComponents" :key="component.key" class="health-component"><div><span>{{ component.label }}</span><strong>{{ componentHealth(vehicle, component) }}%</strong></div><div class="health-track"><span :class="healthClass(componentHealth(vehicle, component))" :style="{ width: `${componentHealth(vehicle, component)}%` }"></span></div><small>Service due at {{ component.serviceIntervalKm.toLocaleString() }} km interval · {{ healthServiceAge(vehicle) }} days since simulated service</small></div></div></article></div>
+          </section>
+          <section class="maintenance-lower">
+            <article class="panel"><div class="panel-heading"><div><h2>Workshop queue</h2><p>Sample schedule · not connected to a workshop</p></div><span class="demo-flag">DEMO</span></div><div class="workshop-row"><b class="bay-number">BAY 02</b><span><strong>Brake inspection · HM-2048</strong><small>Heavy-haul tractor · Estimated labor 3.5 h</small></span><span class="status-pill warning">IN PROGRESS</span></div><div class="workshop-row"><b class="bay-number">BAY 04</b><span><strong>Scheduled service · unit 7C</strong><small>Parts check · Estimated labor 2.0 h</small></span><span class="status-pill planned">QUEUED</span></div><div class="parts-summary"><strong>SPARE PARTS · SAMPLE INVENTORY</strong><span>Brake pads <b>12</b></span><span>Oil filters <b>08</b></span><span>Tyre set 315/70 <b>04</b></span></div></article>
+            <article class="panel"><div class="panel-heading"><div><h2>Diagnostic trouble codes</h2><p>Illustrative fault feed · no vehicle connection</p></div><span class="status-pill critical">2 OPEN</span></div><div class="dtc-row"><span class="dtc-code">DTC P0420</span><span><strong>Catalyst efficiency warning</strong><small>Sample fault · requires workshop diagnosis</small></span><span class="status-pill warning">ADVISORY</span></div><div class="dtc-row"><span class="dtc-code">DTC B10A1</span><span><strong>Filament open circuit</strong><small>Sample fault · lighting circuit</small></span><span class="status-pill critical">ACTIVE</span></div><div class="parts-summary"><strong>LABOR ESTIMATE</strong><span>Illustrative diagnostics <b>1.2 h</b></span></div></article>
+          </section>
+        </template>
+        <footer class="page-footer">HAULMASTER DISPATCH <span>·</span> Routing and map data © OpenStreetMap contributors.</footer>
       </div>
     </section>
   </main>

@@ -1,4 +1,5 @@
 import './shared/styles/main.css'
+import './shared/styles/industrial.css'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'

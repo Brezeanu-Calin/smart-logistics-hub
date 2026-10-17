@@ -25,9 +25,9 @@ function renderRoute() {
 
   mapError.value = ''
   const line = L.polyline(props.geometry.map((point) => [point.latitude, point.longitude]), {
-    color: '#635bdb',
-    weight: 5,
-    opacity: 0.85,
+    color: '#f59e0b',
+    weight: 4,
+    opacity: 0.95,
   }).addTo(layers)
 
   const first = props.geometry[0]
@@ -37,14 +37,14 @@ function renderRoute() {
       radius: 7,
       color: '#fff',
       weight: 2,
-      fillColor: '#20a776',
+      fillColor: '#10b981',
       fillOpacity: 1,
     }).bindPopup('Depot departure').addTo(layers)
     L.circleMarker([last.latitude, last.longitude], {
       radius: 7,
       color: '#fff',
       weight: 2,
-      fillColor: '#e6a14b',
+      fillColor: '#f59e0b',
       fillOpacity: 1,
     }).bindPopup('Depot return').addTo(layers)
   }
@@ -55,7 +55,7 @@ function renderRoute() {
       radius: 6,
       color: '#fff',
       weight: 2,
-      fillColor: stop.type === 'PICKUP' ? '#635bdb' : '#e6a14b',
+      fillColor: stop.type === 'PICKUP' ? '#f59e0b' : '#10b981',
       fillOpacity: 1,
     })
       .bindPopup(`${stop.type} ${stop.stopOrder}: ${stop.city}`)
@@ -100,22 +100,25 @@ onUnmounted(() => {
 <style scoped>
 .route-map-panel {
   position: relative;
-  border-top: 1px solid #eef0f5;
+  border-top: 1px solid #2d333b;
 }
 .route-map {
   height: 300px;
   width: 100%;
-  background: #eef1f4;
+  background: #111416;
+}
+.route-map :deep(.leaflet-tile) {
+  filter: invert(1) hue-rotate(180deg) brightness(.75) contrast(.9);
 }
 .route-map-error {
   position: absolute;
   z-index: 500;
   top: 10px;
   left: 10px;
-  border-radius: 5px;
+  border-radius: 0;
   padding: 7px 9px;
-  color: #7a6370;
-  background: rgb(255 255 255 / 92%);
+  color: #fbbf24;
+  background: #19150e;
   font-size: 11px;
 }
 </style>
