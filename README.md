@@ -20,6 +20,15 @@ six vehicles (two per vehicle class), six drivers, nine freight items, and three
 planned routes, including Cluj-Napoca to Brasov. Six freight items remain
 unassigned at the warehouse. The starter route distances and travel times are
 illustrative estimates.
+Migration V6 stores route activation timestamps for the backend-computed route
+simulation; live positions are derived from saved geometry and are not written
+to the database on every update.
+Migration V7 adds five demo drivers, five vehicles, an articulated trailer,
+five freight items, and five example routes covering active, planned, and
+completed states. These additive sample records are applied at backend startup.
+Migration V8 adds service-history records for the new vehicles so they remain
+eligible for dispatch instead of being incorrectly flagged for immediate
+maintenance.
 
 The Vue app uses `VITE_API_BASE_URL` when set and otherwise calls
 `http://localhost:8080/api`. The backend exposes `/api/config` so the frontend
@@ -49,7 +58,9 @@ The returned route geometry is stored with the route and shown on a Leaflet map
 using OpenStreetMap tiles with attribution. Driving estimates do not include
 loading, delivery dwell, breaks, or live traffic. Planning returns `503` when
 geocoding or routing is unavailable and rejects cities that Nominatim cannot
-find.
+find. `POST /api/routes/{id}/directions` recalculates and saves road geometry
+for an existing route, including demo routes with illustrative straight-line
+geometry; the frontend calls this when opening a route map.
 
 Create routes with `POST /api/routes`, selecting a driver, vehicle, timezone-aware
 departure time, and ordered stops containing one pickup and one later delivery
@@ -65,10 +76,16 @@ The return ETA is recalculated from delivery confirmation using the final
 OSRM leg. A background check (once a minute by default) treats that ETA
 as the depot-arrival proxy and changes returning resources to `AVAILABLE`.
 There is no GPS integration, so this is a time-based estimate, not confirmation
-of the driver's physical location. Cancelling a planned route releases its
-assigned goods immediately; cancelling an active route releases undelivered
-goods but keeps the driver, vehicle, and trailer unavailable until the estimated
-return time.
+of the driver's physical location. The route planner shows a backend-computed
+simulation for active routes: a combined driver/vehicle marker follows the
+saved OSRM geometry from activation at the estimated route duration, with its
+heading and route stops shown on the map. This illustrative position is held
+in the backend from the persisted activation timestamp and is available to
+clients through `GET /api/routes/simulations`; the browser refreshes positions
+in a batch every five seconds. No per-update location records are written.
+Cancelling a planned route releases its assigned goods immediately; cancelling
+an active route releases undelivered goods but keeps the driver, vehicle, and
+trailer unavailable until the estimated return time.
 
 ## Vehicle maintenance
 

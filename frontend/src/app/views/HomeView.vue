@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import RouteMap from '../components/RouteMap.vue'
 import api, {
   getErrorMessage,
+  isApiNotFoundError,
   type Driver,
   type DriverRequest,
   type Goods,
   type GoodsRequest,
   type Route,
   type RouteCreateRequest,
+  type RouteSimulationPosition,
   type Vehicle,
   type VehicleMaintenanceComponent,
   type VehicleRequest,
@@ -36,11 +38,14 @@ const drivers = ref<Driver[]>([])
 const vehicles = ref<Vehicle[]>([])
 const goods = ref<Goods[]>([])
 const routes = ref<Route[]>([])
+const simulationPositions = reactive<Record<number, RouteSimulationPosition>>({})
 const warehouseCity = ref('Cluj-Napoca, Romania')
 const maintenanceEntries = reactive<Record<string, MaintenanceEntry>>({})
 const busy = ref(false)
 const error = ref('')
 const success = ref('')
+const snackbarMessage = computed(() => error.value || success.value)
+const snackbarIsError = computed(() => Boolean(error.value))
 
 const driverForm = reactive<DriverRequest>({ name: '', email: '', licenseCategories: ['B'] })
 const editingDriverId = ref<number | null>(null)
@@ -73,10 +78,12 @@ const routeForm = reactive({
 })
 const selectedGoodsIds = ref<number[]>([])
 const expandedRouteMaps = ref(new Set<number>())
+const loadingRouteMaps = ref(new Set<number>())
 const selectedVehicleId = ref<number | null>(null)
 const contractCategory = ref('ALL')
 const contractSort = ref<'RATE' | 'REVENUE' | 'DEPARTURE'>('RATE')
 const fleetSort = ref<'CLASS' | 'MILEAGE' | 'STATUS'>('CLASS')
+let snackbarTimer: number | undefined
 const demoContracts: DemoContract[] = [
   { reference: 'HM-2048', client: 'NorthSea Energy', category: 'HEAVY HAUL', pickup: 'Rotterdam', delivery: 'Munich', departure: 'Today · 18:00', departureSort: 1, distanceKm: 824, revenueEur: 7420 },
   { reference: 'HM-2052', client: 'Bavaria Components', category: 'GENERAL', pickup: 'Utrecht', delivery: 'Stuttgart', departure: 'Tomorrow · 06:30', departureSort: 2, distanceKm: 637, revenueEur: 2860 },
@@ -84,6 +91,7 @@ const demoContracts: DemoContract[] = [
   { reference: 'HM-2061', client: 'RheinChem GmbH', category: 'ADR', pickup: 'Antwerp', delivery: 'Cologne', departure: '18 Oct · 13:00', departureSort: 4, distanceKm: 214, revenueEur: 1760 },
 ]
 const activeRoutes = computed(() => routes.value.filter((route) => route.status === 'ACTIVE').length)
+const liveRoutes = computed(() => routes.value.filter((route) => route.status === 'ACTIVE'))
 const availableDrivers = computed(() => drivers.value.filter((driver) =>
   driver.status === 'AVAILABLE' && !isDriverScheduled(driver.id),
 ).length)
@@ -213,11 +221,46 @@ function clearMessages() {
   success.value = ''
 }
 
-function toggleRouteMap(routeId: number) {
-  const expanded = new Set(expandedRouteMaps.value)
-  if (expanded.has(routeId)) expanded.delete(routeId)
-  else expanded.add(routeId)
-  expandedRouteMaps.value = expanded
+watch([error, success], ([nextError, nextSuccess]) => {
+  if (snackbarTimer !== undefined) window.clearTimeout(snackbarTimer)
+  if (nextError || nextSuccess) {
+    snackbarTimer = window.setTimeout(() => {
+      error.value = ''
+      success.value = ''
+      snackbarTimer = undefined
+    }, 5000)
+  }
+})
+
+async function toggleRouteMap(route: Route) {
+  const routeId = route.id
+  if (expandedRouteMaps.value.has(routeId)) {
+    const expanded = new Set(expandedRouteMaps.value)
+    expanded.delete(routeId)
+    expandedRouteMaps.value = expanded
+    return
+  }
+
+  const loading = new Set(loadingRouteMaps.value)
+  loading.add(routeId)
+  loadingRouteMaps.value = loading
+  clearMessages()
+  try {
+    const response = await api.post<Route>(`/routes/${routeId}/directions`)
+    const routeIndex = routes.value.findIndex((item) => item.id === routeId)
+    if (routeIndex >= 0) routes.value[routeIndex] = response.data
+    const expanded = new Set(expandedRouteMaps.value)
+    expanded.add(routeId)
+    expandedRouteMaps.value = expanded
+  } catch (requestError) {
+    error.value = isApiNotFoundError(requestError)
+      ? 'The running backend does not have the route-directions endpoint. Restart the backend and verify the frontend API URL points to it.'
+      : getErrorMessage(requestError)
+  } finally {
+    const pending = new Set(loadingRouteMaps.value)
+    pending.delete(routeId)
+    loadingRouteMaps.value = pending
+  }
 }
 
 async function loadData() {
@@ -243,17 +286,49 @@ async function loadData() {
 async function refresh() {
   try {
     await loadData()
+    await refreshSimulationPositions()
   } catch (requestError) {
     error.value = getErrorMessage(requestError)
   }
 }
 
+async function refreshSimulationPositions() {
+  if (simulationRefreshInFlight) return
+  if (activeRoutes.value === 0) {
+    Object.keys(simulationPositions).forEach((routeId) => delete simulationPositions[Number(routeId)])
+    return
+  }
+  simulationRefreshInFlight = true
+  try {
+    const response = await api.get<RouteSimulationPosition[]>('/routes/simulations')
+    const activeRouteIds = new Set(response.data.map((position) => position.routeId))
+    Object.keys(simulationPositions).forEach((routeId) => {
+      if (!activeRouteIds.has(Number(routeId))) delete simulationPositions[Number(routeId)]
+    })
+    response.data.forEach((position) => {
+      simulationPositions[position.routeId] = position
+    })
+  } catch (requestError) {
+    Object.keys(simulationPositions).forEach((routeId) => delete simulationPositions[Number(routeId)])
+    error.value = getErrorMessage(requestError)
+  } finally {
+    simulationRefreshInFlight = false
+  }
+}
+
 let refreshTimer: number
+let simulationRefreshTimer: number
+let simulationRefreshInFlight = false
 onMounted(() => {
   void refresh()
   refreshTimer = window.setInterval(() => void refresh(), 30_000)
+  simulationRefreshTimer = window.setInterval(() => void refreshSimulationPositions(), 30_000)
 })
-onUnmounted(() => window.clearInterval(refreshTimer))
+onUnmounted(() => {
+  window.clearInterval(refreshTimer)
+  window.clearInterval(simulationRefreshTimer)
+  if (snackbarTimer !== undefined) window.clearTimeout(snackbarTimer)
+})
 
 function resetDriverForm() {
   editingDriverId.value = null
@@ -604,8 +679,18 @@ routeForm.departureLocal = defaultDepartureTime()
       </header>
 
       <div class="content">
-        <div v-if="error" class="notice notice-error" role="alert"><span>!</span>{{ error }}<button @click="error = ''">×</button></div>
-        <div v-if="success" class="notice notice-success" role="status"><span>✓</span>{{ success }}<button @click="success = ''">×</button></div>
+        <Transition name="snackbar">
+          <div
+            v-if="snackbarMessage"
+            class="app-snackbar"
+            :class="snackbarIsError ? 'app-snackbar-error' : 'app-snackbar-success'"
+            :role="snackbarIsError ? 'alert' : 'status'"
+          >
+            <span>{{ snackbarIsError ? '!' : '✓' }}</span>
+            <p>{{ snackbarMessage }}</p>
+            <button aria-label="Dismiss notification" @click="clearMessages">×</button>
+          </div>
+        </Transition>
 
         <template v-if="section === 'overview'">
           <div class="page-heading">
@@ -631,29 +716,23 @@ routeForm.departureLocal = defaultDepartureTime()
         </template>
 
         <template v-else-if="section === 'routes'">
-          <div class="page-heading"><div><p class="eyebrow">ROUTE PLANNER / DISPATCH</p><h1>Route Planner &amp; Dispatch</h1><p class="subtitle">Sequence multi-stop freight, review route conditions, and manage return estimates.</p></div><span class="demo-flag">ROUTE SCENARIO · DEMO</span></div>
-          <section class="panel tactical-panel">
-            <div class="panel-heading"><div><h2>Heavy-haul corridor · Rotterdam → Munich</h2><p>Illustrative route scenario · wind turbine blade · 42.5 T · Not connected to live GPS</p></div><span class="status-pill warning">2 HAZARDS</span></div>
-            <div class="tactical-grid">
-              <div class="tactical-map" role="img" aria-label="Illustrative route diagram from Rotterdam through Kassel to Munich">
-                <div class="map-grid"></div><span class="map-label map-rotterdam">ROTTERDAM</span><span class="map-label map-kassel">KASSEL HILLS</span><span class="map-label map-nuremberg">NUREMBERG</span><span class="map-label map-munich">MUNICH</span>
-                <svg viewBox="0 0 700 300" preserveAspectRatio="none" aria-hidden="true"><path class="road-line" d="M30 242 C110 220 110 170 194 184 S285 124 370 145 S448 76 520 97 S612 122 670 39"/><path class="haul-line" d="M30 242 C110 220 110 170 194 184 S285 124 370 145 S448 76 520 97 S612 122 670 39"/></svg>
-                <span class="waypoint waypoint-a">01</span><span class="waypoint waypoint-b">02</span><span class="waypoint waypoint-c">03</span><span class="waypoint waypoint-d">04</span>
-                <span class="rig-tag"><i></i> DEMO RIG · 62 KM/H</span>
-                <div class="map-legend">SCHEMATIC ROUTE · NO LIVE POSITION</div>
-              </div>
-              <aside class="route-intel">
-                <div class="intel-title">WAYPOINT SEQUENCE <span>04 STOPS</span></div>
-                <div class="waypoint-row"><b>01</b><span><strong>Rotterdam, NL</strong><small>DEPOT · LOAD CHECK</small></span><em>ORIGIN</em></div>
-                <div class="waypoint-row hazard-row"><b>02</b><span><strong>Kassel Hills, DE</strong><small>STEEP INCLINE · LOW-BRIDGE BYPASS</small></span><em>CAUTION</em></div>
-                <div class="waypoint-row"><b>03</b><span><strong>Nuremberg, DE</strong><small>FUEL · STATUTORY REST</small></span><em>REST</em></div>
-                <div class="waypoint-row"><b>04</b><span><strong>Munich, DE</strong><small>DELIVERY · CLEARANCE CHECK</small></span><em>DEST.</em></div>
-                <div class="corridor-alert"><strong>OVERSIZE LOAD</strong><span>Clearance and permits shown as demo checks only.</span></div>
-              </aside>
-            </div>
-            <div class="analytics-strip">
-              <div><small>DISTANCE</small><strong>824 <i>KM</i></strong></div><div><small>EST. FUEL</small><strong>286 <i>L · DEMO</i></strong></div><div><small>TOLLS</small><strong>€ 412 <i>EST.</i></strong></div><div><small>LEGAL DRIVE</small><strong>09:00 <i>H · DEMO</i></strong></div>
-              <div class="elevation"><small>ELEVATION PROFILE · SCHEMATIC</small><svg viewBox="0 0 330 45" preserveAspectRatio="none" aria-label="Illustrative elevation profile"><path d="M0 39 L32 34 L55 36 L83 23 L109 29 L139 12 L161 18 L191 5 L215 20 L244 14 L271 29 L302 25 L330 36" /></svg></div>
+          <div class="page-heading"><div><p class="eyebrow">ROUTE PLANNER / DISPATCH</p><h1>Route Planner &amp; Dispatch</h1><p class="subtitle">Plan multi-stop freight, review saved road routes, and follow simulated driver and vehicle positions.</p></div><span class="demo-flag">SIMULATED · NOT GPS</span></div>
+          <section class="panel">
+            <div class="panel-heading"><div><h2>Live navigation</h2><p>Active vehicles move along their saved OSRM road geometry at the estimated route duration. Position is illustrative, not live GPS.</p></div><span class="status-pill active">{{ liveRoutes.length }} ACTIVE</span></div>
+            <div v-if="!liveRoutes.length" class="empty-state"><span>↗</span><strong>No active routes</strong><p>Start a planned route to see its actual road geometry and simulated vehicle position here.</p></div>
+            <div v-else class="route-list">
+              <article v-for="route in liveRoutes" :key="route.id" class="route-card">
+                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill active">EN ROUTE</span></div><span class="route-number">{{ route.vehicleLicensePlate }} · {{ route.driverName }}</span></div>
+                <RouteMap
+                  :route-id="route.id"
+                  :geometry="route.geometry"
+                  :stops="route.stops"
+                  :status="route.status"
+                  :simulation-position="simulationPositions[route.id] ?? null"
+                  :driver-name="route.driverName"
+                  :vehicle-license-plate="route.vehicleLicensePlate"
+                />
+              </article>
             </div>
           </section>
           <section class="panel form-panel">
@@ -672,10 +751,19 @@ routeForm.departureLocal = defaultDepartureTime()
             <div v-if="!routes.length" class="empty-state"><span>↗</span><strong>No routes planned</strong><p>Assign an available driver, vehicle, and freight to create your first route.</p></div>
             <div v-else class="route-list">
               <article v-for="route in routes" :key="route.id" class="route-card">
-                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></div><div class="route-actions"><button class="text-button" @click="toggleRouteMap(route.id)">{{ expandedRouteMaps.has(route.id) ? 'Hide map' : 'Show map' }}</button><button v-if="route.status === 'PLANNED'" class="small-button" :disabled="busy" @click="setRouteStatus(route, 'ACTIVE')">Start route</button><button v-if="route.status === 'PLANNED' || (route.status === 'CANCELLED' && (!route.estimatedReturnTime || route.returnedAt))" class="icon-button danger" :disabled="busy" aria-label="Delete route" @click="deleteRoute(route)">⌫</button></div></div>
+                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></div><div class="route-actions"><button v-if="route.status !== 'ACTIVE'" class="text-button" :disabled="loadingRouteMaps.has(route.id)" @click="toggleRouteMap(route)">{{ loadingRouteMaps.has(route.id) ? 'Calculating route…' : expandedRouteMaps.has(route.id) ? 'Hide map' : 'Show map' }}</button><button v-if="route.status === 'PLANNED'" class="small-button" :disabled="busy" @click="setRouteStatus(route, 'ACTIVE')">Start route</button><button v-if="route.status === 'PLANNED' || (route.status === 'CANCELLED' && (!route.estimatedReturnTime || route.returnedAt))" class="icon-button danger" :disabled="busy" aria-label="Delete route" @click="deleteRoute(route)">⌫</button></div></div>
                 <div class="route-summary"><div><small>DRIVER</small><strong>{{ route.driverName }}</strong></div><div><small>VEHICLE</small><strong>{{ route.vehicleLicensePlate }}<template v-if="route.trailerLicensePlate"> + {{ route.trailerLicensePlate }}</template></strong></div><div><small>DEPARTURE</small><strong>{{ displayDate(route.departureTime) }}</strong></div><div><small>EST. AT DEPOT</small><strong>{{ displayDate(route.estimatedReturnTime) }}</strong></div></div>
                 <div class="route-metrics"><span>↔ {{ (route.distanceMeters / 1000).toFixed(1) }} km total distance</span><span>◷ {{ displayDuration(route.drivingDurationSeconds) }} driving</span><span v-if="route.returnedAt">✓ Returned {{ displayDate(route.returnedAt) }}</span></div>
-                <RouteMap v-if="expandedRouteMaps.has(route.id)" :route-id="route.id" :geometry="route.geometry" :stops="route.stops" />
+                <RouteMap
+                  v-if="expandedRouteMaps.has(route.id) && route.status !== 'ACTIVE'"
+                  :route-id="route.id"
+                  :geometry="route.geometry"
+                  :stops="route.stops"
+                  :status="route.status"
+                  :simulation-position="null"
+                  :driver-name="route.driverName"
+                  :vehicle-license-plate="route.vehicleLicensePlate"
+                />
                 <ol class="stop-list"><li v-for="stop in route.stops" :key="`${stop.goodsId}-${stop.type}`"><span class="stop-marker" :class="stop.type.toLowerCase()"></span><span><small>{{ stop.type }} · {{ stop.trackingCode }}</small><strong>{{ stop.city }}</strong></span><button v-if="route.status === 'ACTIVE' && stop.type === 'DELIVERY' && goodsStatus(stop.goodsId) === 'IN_TRANSIT' && canConfirmDelivery(route, stop.goodsId)" class="text-button" :disabled="busy" @click="deliverGoods(route, stop.goodsId)">Confirm delivery</button><span v-else-if="stop.type === 'DELIVERY' && ['DELIVERED', 'ARCHIVED'].includes(goodsStatus(stop.goodsId) ?? '')" class="delivered-label">Delivered</span><span v-else-if="route.status === 'ACTIVE' && stop.type === 'DELIVERY' && goodsStatus(stop.goodsId) === 'IN_TRANSIT'" class="delivered-label">Next stop pending</span></li></ol>
                 <div v-if="route.status === 'PLANNED'" class="route-footer"><button class="text-button danger-text" :disabled="busy" @click="setRouteStatus(route, 'CANCELLED')">Cancel route</button></div>
               </article>

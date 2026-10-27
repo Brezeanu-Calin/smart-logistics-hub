@@ -18,6 +18,9 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
     @EntityGraph(attributePaths = {"driver", "vehicle", "trailer", "stops", "stops.goods"})
     List<Route> findAllByOrderByDepartureTimeAsc();
 
+    @EntityGraph(attributePaths = {"geometryPoints"})
+    List<Route> findAllByStatusOrderByDepartureTimeAsc(RouteStatus status);
+
     @Override
     @EntityGraph(attributePaths = {"driver", "vehicle", "trailer", "stops", "stops.goods"})
     Optional<Route> findById(Long id);

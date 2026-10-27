@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
@@ -88,10 +89,21 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
                             .queryParam("overview", "full")
                             .queryParam("geometries", "geojson")
                             .queryParam("steps", "false")
+                            .queryParam("radiuses", waypoints.stream()
+                                    .map(ignored -> "1000")
+                                    .collect(Collectors.joining(";")))
                             .build())
                     .accept(MediaType.APPLICATION_JSON)
+                    .header("Accept-Encoding", "identity")
                     .retrieve()
                     .body(OsrmResponse.class);
+        } catch (RestClientResponseException exception) {
+            String upstreamMessage = exception.getResponseBodyAsString();
+            throw new RoutingUnavailableException(
+                    "OSRM rejected the route request (HTTP " + exception.getStatusCode().value()
+                            + "): " + upstreamMessage,
+                    exception
+            );
         } catch (RestClientException exception) {
             throw new RoutingUnavailableException("OSRM could not calculate a route for the supplied cities.", exception);
         }
@@ -155,6 +167,7 @@ public class OpenStreetMapDirectionsService implements RouteDirectionsService {
                             .build())
                     .header("User-Agent", userAgent)
                     .accept(MediaType.APPLICATION_JSON)
+                    .header("Accept-Encoding", "identity")
                     .retrieve()
                     .body(NominatimResult[].class);
         } catch (RestClientException exception) {

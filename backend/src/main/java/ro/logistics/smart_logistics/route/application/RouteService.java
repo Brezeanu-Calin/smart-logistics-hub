@@ -17,6 +17,7 @@ import ro.logistics.smart_logistics.route.dto.RouteCreateRequest;
 import ro.logistics.smart_logistics.route.dto.RouteCoordinate;
 import ro.logistics.smart_logistics.route.dto.RouteResponse;
 import ro.logistics.smart_logistics.route.dto.RouteStatusRequest;
+import ro.logistics.smart_logistics.route.dto.RouteSimulationPositionResponse;
 import ro.logistics.smart_logistics.route.dto.RouteStopRequest;
 import ro.logistics.smart_logistics.route.dto.RouteStopResponse;
 import ro.logistics.smart_logistics.route.persistence.RouteRepository;
@@ -38,6 +39,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -89,8 +91,33 @@ public class RouteService {
     }
 
     @Transactional(readOnly = true)
+    public List<RouteSimulationPositionResponse> findActiveSimulationPositions() {
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        return routeRepository.findAllByStatusOrderByDepartureTimeAsc(RouteStatus.ACTIVE).stream()
+                .map(route -> RouteSimulationCalculator.calculate(route, now))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
     public RouteResponse findById(Long id) {
         return toResponse(findRoute(id));
+    }
+
+    public RouteResponse recalculateDirections(Long id) {
+        Route route = findRouteForUpdate(id);
+        List<String> cities = route.getStops().stream()
+                .sorted(Comparator.comparing(RouteStop::getStopOrder))
+                .map(RouteStop::getCity)
+                .toList();
+        RouteTravelEstimate estimate = directionsService.estimate(cities);
+        if (estimate == null || estimate.geometry() == null || estimate.geometry().size() < 2) {
+            throw new RoutingUnavailableException("The routing service returned no road route geometry.");
+        }
+
+        route.clearGeometryPoints();
+        entityManager.flush();
+        estimate.geometry().forEach(point -> route.addGeometryPoint(point.latitude(), point.longitude()));
+        return toResponse(routeRepository.saveAndFlush(route));
     }
 
     public RouteResponse create(RouteCreateRequest request) {
@@ -241,7 +268,7 @@ public class RouteService {
         List<Goods> goods = lockRouteGoods(route);
         ensureGoodsStatus(goods, GoodsStatus.ASSIGNED);
 
-        route.activate();
+        route.activate(OffsetDateTime.now(ZoneOffset.UTC));
         driver.markInTransit();
         vehicle.markInTransit();
         if (trailer != null) {

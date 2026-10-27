@@ -101,6 +101,16 @@ export interface RouteCoordinate {
   longitude: number
 }
 
+export interface RouteSimulationPosition {
+  routeId: number
+  latitude: number
+  longitude: number
+  headingDegrees: number
+  heading: string
+  progress: number
+  calculatedAt: string
+}
+
 export interface Route {
   id: number
   driverId: number
@@ -132,6 +142,10 @@ export function getErrorMessage(error: unknown): string {
     return error.response?.data?.message ?? error.message
   }
   return error instanceof Error ? error.message : 'An unexpected error occurred.'
+}
+
+export function isApiNotFoundError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 404
 }
 
 export default api

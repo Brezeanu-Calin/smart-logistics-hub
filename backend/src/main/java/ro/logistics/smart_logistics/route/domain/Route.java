@@ -21,6 +21,7 @@ import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
 
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -54,6 +55,9 @@ public class Route {
 
     @Column(name = "returned_at", columnDefinition = "datetimeoffset")
     private OffsetDateTime returnedAt;
+
+    @Column(name = "activated_at", columnDefinition = "datetimeoffset")
+    private OffsetDateTime activatedAt;
 
     @Column(name = "distance_meters", nullable = false)
     private Long distanceMeters;
@@ -111,9 +115,21 @@ public class Route {
         geometryPoints.add(point);
     }
 
+    public void clearGeometryPoints() {
+        geometryPoints.clear();
+    }
+
     public void activate() {
+        activate(OffsetDateTime.now(ZoneOffset.UTC));
+    }
+
+    public void activate(OffsetDateTime activatedAt) {
         requireStatus(RouteStatus.PLANNED);
+        if (activatedAt == null) {
+            throw new IllegalArgumentException("Route activation time is required.");
+        }
         status = RouteStatus.ACTIVE;
+        this.activatedAt = activatedAt;
     }
 
     public void complete() {
@@ -179,6 +195,10 @@ public class Route {
 
     public OffsetDateTime getReturnedAt() {
         return returnedAt;
+    }
+
+    public OffsetDateTime getActivatedAt() {
+        return activatedAt;
     }
 
     public Long getDistanceMeters() {

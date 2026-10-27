@@ -102,6 +102,39 @@ class RouteServiceTest {
     }
 
     @Test
+    void recalculatesAndPersistsRoadGeometryForAnExistingRoute() throws Exception {
+        Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.B));
+        setId(driver, 1L);
+        Vehicle vehicle = new Vehicle("VAN-1", VehicleType.VAN, "Make", "Model", 2022, 5000.0, 20.0, 1000);
+        setId(vehicle, 2L);
+        Goods goods = goods(3L, 4000.0, 10.0);
+        Route route = route(driver, vehicle, goods, RouteStatus.PLANNED);
+        route.addGeometryPoint(46.77, 23.59);
+        route.addGeometryPoint(44.43, 26.10);
+        setId(route, 8L);
+        List<RouteCoordinate> roadGeometry = List.of(
+                new RouteCoordinate(46.77, 23.59),
+                new RouteCoordinate(46.20, 24.30),
+                new RouteCoordinate(45.65, 25.60)
+        );
+        when(routeRepository.findByIdForUpdate(8L)).thenReturn(Optional.of(route));
+        when(directionsService.estimate(List.of(goods.getPickupCity(), goods.getDeliveryCity())))
+                .thenReturn(new RouteTravelEstimate(
+                        120_000,
+                        Duration.ofHours(2),
+                        Duration.ofHours(1),
+                        roadGeometry,
+                        List.of()
+                ));
+        when(routeRepository.saveAndFlush(route)).thenReturn(route);
+
+        var response = routeService.recalculateDirections(8L);
+
+        assertEquals(roadGeometry, response.geometry());
+        verify(directionsService).estimate(List.of(goods.getPickupCity(), goods.getDeliveryCity()));
+    }
+
+    @Test
     void selectsCompatibleTrailerWhenVehicleCapacityIsInsufficient() throws Exception {
         Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.BE));
         setId(driver, 1L);

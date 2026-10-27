@@ -3,6 +3,7 @@ package ro.logistics.smart_logistics.route.api;
 import ro.logistics.smart_logistics.route.application.RouteService;
 import ro.logistics.smart_logistics.route.dto.RouteCreateRequest;
 import ro.logistics.smart_logistics.route.dto.RouteResponse;
+import ro.logistics.smart_logistics.route.dto.RouteSimulationPositionResponse;
 import ro.logistics.smart_logistics.route.dto.RouteStatusRequest;
 
 import jakarta.validation.Valid;
@@ -37,9 +38,19 @@ public class RouteController {
         return routeService.findAll();
     }
 
+    @GetMapping("/simulations")
+    public List<RouteSimulationPositionResponse> findActiveSimulationPositions() {
+        return routeService.findActiveSimulationPositions();
+    }
+
     @GetMapping("/{id}")
     public RouteResponse findById(@PathVariable @Positive Long id) {
         return routeService.findById(id);
+    }
+
+    @PostMapping("/{id}/directions")
+    public RouteResponse recalculateDirections(@PathVariable @Positive Long id) {
+        return routeService.recalculateDirections(id);
     }
 
     @PostMapping

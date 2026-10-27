@@ -30,13 +30,20 @@ class OpenStreetMapDirectionsServiceTest {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         ConcurrentLinkedQueue<String> geocodingQueries = new ConcurrentLinkedQueue<>();
         ConcurrentLinkedQueue<String> userAgents = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<String> geocodingAcceptEncodings = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<String> routingRequests = new ConcurrentLinkedQueue<>();
+        ConcurrentLinkedQueue<String> routingAcceptEncodings = new ConcurrentLinkedQueue<>();
         server.createContext("/search", exchange -> {
             String query = exchange.getRequestURI().getRawQuery();
             geocodingQueries.add(URLDecoder.decode(query, StandardCharsets.UTF_8));
             userAgents.add(exchange.getRequestHeaders().getFirst("User-Agent"));
+            geocodingAcceptEncodings.add(exchange.getRequestHeaders().getFirst("Accept-Encoding"));
             respond(exchange, 200, "[{\"lat\":\"46.77\",\"lon\":\"23.59\"}]");
         });
-        server.createContext("/route/v1/driving/", exchange -> respond(exchange, 200, """
+        server.createContext("/route/v1/driving/", exchange -> {
+            routingRequests.add(exchange.getRequestURI().toASCIIString());
+            routingAcceptEncodings.add(exchange.getRequestHeaders().getFirst("Accept-Encoding"));
+            respond(exchange, 200, """
                 {
                   "code": "Ok",
                   "routes": [{
@@ -52,7 +59,8 @@ class OpenStreetMapDirectionsServiceTest {
                     }
                   }]
                 }
-                """));
+                """);
+        });
         server.start();
 
         try {
@@ -88,6 +96,12 @@ class OpenStreetMapDirectionsServiceTest {
             assertEquals(46.77, estimate.stopCoordinates().getFirst().latitude());
             assertEquals(2, geocodingQueries.size());
             assertEquals(2, userAgents.size());
+            assertEquals(List.of("identity", "identity"), List.copyOf(geocodingAcceptEncodings));
+            assertEquals(
+                    "/route/v1/driving/23.59,46.77;23.59,46.77;23.59,46.77?overview=full&geometries=geojson&steps=false&radiuses=1000;1000;1000",
+                    routingRequests.peek()
+            );
+            assertEquals("identity", routingAcceptEncodings.peek());
             assertEquals(
                     List.of("Depot", "Bucharest, Romania"),
                     geocodingQueries.stream().map(query -> query.substring(2, query.indexOf("&format="))).toList()
