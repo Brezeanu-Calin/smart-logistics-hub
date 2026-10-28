@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import RouteMap from '../components/RouteMap.vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import '../../shared/styles/main.css'
+import '../../shared/styles/industrial.css'
 import PaginationControl from '../../shared/components/PaginationControl.vue'
-import FinanceView from './FinanceView.vue'
 import api, {
   getErrorMessage,
   isApiNotFoundError,
@@ -20,6 +20,9 @@ import api, {
   type VehicleRequest,
   type WarehouseConfig,
 } from '../api'
+
+const RouteMap = defineAsyncComponent(() => import('../components/RouteMap.vue'))
+const FinanceView = defineAsyncComponent(() => import('./FinanceView.vue'))
 
 type Section = 'overview' | 'routes' | 'freight' | 'drivers' | 'fleet' | 'maintenance' | 'finance'
 type DemoContract = {
@@ -930,7 +933,6 @@ routeForm.departureLocal = defaultDepartureTime()
       <nav class="side-nav" aria-label="Main navigation">
         <button :class="{ selected: section === 'overview' }" @click="section = 'overview'"><span>▦</span> Overview</button>
         <button :class="{ selected: section === 'routes' }" @click="section = 'routes'"><span>↗</span> Route Planner <b>{{ activeRoutes }}</b></button>
-        <button class="nav-plan-route" @click="openRoutePlanner"><span>＋</span> Plan a route</button>
         <button :class="{ selected: section === 'fleet' }" @click="section = 'fleet'"><span>▰</span> Fleet Ops</button>
         <button :class="{ selected: section === 'freight' }" @click="section = 'freight'"><span>▣</span> Freight Jobs</button>
         <button :class="{ selected: section === 'maintenance' }" @click="section = 'maintenance'"><span>⚒</span> Maintenance <b>{{ maintenanceVehicles.length }}</b></button>
@@ -947,7 +949,7 @@ routeForm.departureLocal = defaultDepartureTime()
     <section class="main-panel">
       <header class="topbar">
         <div class="crumb">HAULMASTER <span>/</span> {{ screenTitle }}</div>
-        <div class="topbar-right"><span class="live-dot"></span> WAREHOUSE · {{ warehouseCity }} <button class="primary-button navbar-plan-button" @click="openRoutePlanner">＋ Plan a route</button><button class="refresh-button" :disabled="busy" @click="refresh" aria-label="Refresh data">↻</button></div>
+        <div class="topbar-right"><span class="live-dot"></span> WAREHOUSE · {{ warehouseCity }} <button class="primary-button navbar-plan-button" @click="openRoutePlanner">＋ Create a route</button><button class="refresh-button" :disabled="busy" @click="refresh" aria-label="Refresh data">↻</button></div>
       </header>
 
       <div class="content">
@@ -967,7 +969,6 @@ routeForm.departureLocal = defaultDepartureTime()
         <template v-if="section === 'overview'">
           <div class="page-heading">
             <div><p class="eyebrow">OPERATIONS SNAPSHOT</p><h1>Good day, dispatcher</h1><p class="subtitle">Here’s what’s happening across your fleet today.</p></div>
-            <button class="primary-button" @click="openRoutePlanner">＋ Plan a route</button>
           </div>
           <div class="stat-grid">
             <article class="stat-card"><div class="stat-top"><span>Active routes</span><span class="stat-icon purple">↗</span></div><strong>{{ activeRoutes }}</strong><small>Currently on the road</small></article>
@@ -977,7 +978,7 @@ routeForm.departureLocal = defaultDepartureTime()
           </div>
           <section class="panel">
             <div class="panel-heading"><div><h2>Recent routes</h2><p>Latest route plans and delivery progress</p></div><button class="text-button" @click="section = 'routes'">View all routes →</button></div>
-            <div v-if="!routes.length" class="empty-state"><span>↗</span><strong>No routes yet</strong><p>Create a route to see its distance, driving estimate, and delivery progress here.</p><button class="secondary-button" @click="openRoutePlanner">Plan your first route</button></div>
+            <div v-if="!routes.length" class="empty-state"><span>↗</span><strong>No routes yet</strong><p>Use Create a route in the navigation bar to start your first dispatch.</p></div>
             <div v-else class="table-wrap"><table><thead><tr><th>ROUTE</th><th>DRIVER / VEHICLE</th><th>DEPARTURE</th><th>EST. RETURN</th><th>STATUS</th><th></th></tr></thead><tbody><tr v-for="route in routes.slice(0, 5)" :key="route.id"><td><strong>#{{ route.id }}</strong><small>{{ (route.distanceMeters / 1000).toFixed(1) }} km · {{ displayDuration(route.drivingDurationSeconds) }}</small></td><td>{{ route.driverName }}<small>{{ route.vehicleLicensePlate }}</small></td><td>{{ displayDate(route.departureTime) }}</td><td>{{ displayDate(route.estimatedReturnTime) }}</td><td><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></td><td><button class="text-button" @click="section = 'routes'">Details</button></td></tr></tbody></table></div>
           </section>
           <div class="quick-grid">
@@ -988,7 +989,7 @@ routeForm.departureLocal = defaultDepartureTime()
         </template>
 
         <template v-else-if="section === 'routes'">
-          <div class="page-heading"><div><p class="eyebrow">ROUTE PLANNER / DISPATCH</p><h1>Route Planner &amp; Dispatch</h1><p class="subtitle">Review saved road routes, follow simulated positions, or plan a new dispatch.</p></div><div class="heading-actions"><span class="demo-flag">SIMULATED · NOT GPS</span><button class="primary-button" @click="openRoutePlanner">＋ Plan a route</button></div></div>
+          <div class="page-heading"><div><p class="eyebrow">ROUTE PLANNER / DISPATCH</p><h1>Route Planner &amp; Dispatch</h1><p class="subtitle">Review saved road routes, follow simulated positions, or create a new dispatch.</p></div><div class="heading-actions"><span class="demo-flag">SIMULATED · NOT GPS</span></div></div>
           <section class="panel">
             <div class="panel-heading"><div><h2>Live navigation</h2><p>Active vehicles move along their saved OSRM road geometry at the estimated route duration. Position is illustrative, not live GPS.</p></div><span class="status-pill active">{{ liveRoutes.length }} ACTIVE</span></div>
             <div v-if="!liveRoutes.length" class="empty-state"><span>↗</span><strong>No active routes</strong><p>Start a planned route to see its actual road geometry and simulated vehicle position here.</p></div>
