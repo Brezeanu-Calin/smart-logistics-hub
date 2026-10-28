@@ -2,7 +2,7 @@ package ro.logistics.smart_logistics.trailer.persistence;
 
 import ro.logistics.smart_logistics.trailer.domain.Trailer;
 import ro.logistics.smart_logistics.trailer.domain.TrailerStatus;
-import ro.logistics.smart_logistics.trailer.domain.TrailerType;
+import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
 
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
@@ -16,7 +16,10 @@ import java.util.Optional;
 public interface TrailerRepository extends JpaRepository<Trailer, Long> {
     List<Trailer> findAllByOrderByLicensePlateAsc();
 
-    List<Trailer> findAllByTrailerTypeAndStatusOrderByLicensePlateAsc(TrailerType trailerType, TrailerStatus status);
+    List<Trailer> findAllByCompatibleVehicleTypeAndStatusOrderByLicensePlateAsc(
+            VehicleType compatibleVehicleType,
+            TrailerStatus status
+    );
 
     boolean existsByLicensePlateIgnoreCase(String licensePlate);
 
@@ -27,9 +30,13 @@ public interface TrailerRepository extends JpaRepository<Trailer, Long> {
     Optional<Trailer> findByIdForUpdate(@Param("id") Long id);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select t from Trailer t where t.trailerType = :type and t.status in :statuses order by t.licensePlate")
+    @Query("""
+            select t from Trailer t
+            where t.compatibleVehicleType = :vehicleType and t.status in :statuses
+            order by t.licensePlate
+            """)
     List<Trailer> findAllForPlanning(
-            @Param("type") TrailerType type,
+            @Param("vehicleType") VehicleType vehicleType,
             @Param("statuses") List<TrailerStatus> statuses
     );
 }

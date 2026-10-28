@@ -29,6 +29,9 @@ completed states. These additive sample records are applied at backend startup.
 Migration V8 adds service-history records for the new vehicles so they remain
 eligible for dispatch instead of being incorrectly flagged for immediate
 maintenance.
+Migration V9 adds EUR freight revenue and maintenance costs, additional freight
+and trailer categories, and explicit trailer-to-vehicle compatibility. Existing
+financial values remain unset rather than being fabricated.
 
 The Vue app uses `VITE_API_BASE_URL` when set and otherwise calls
 `http://localhost:8080/api`. The backend exposes `/api/config` so the frontend
@@ -90,7 +93,7 @@ trailer unavailable until the estimated return time.
 ## Vehicle maintenance
 
 Every maintenance operation is stored with its component, performed date, and
-vehicle odometer reading. Component intervals use the conservative lower bound
+vehicle odometer reading, and recorded cost in EUR. Component intervals use the conservative lower bound
 from the supplied interval ranges. When both distance and time limits apply,
 the lower remaining health is shown. Entries that are conditional (for example,
 “as needed” or “engine overhaul”) retain service history but do not display an
@@ -102,7 +105,7 @@ Vehicles at or below 10% on any healthbar are automatically marked
 vehicle already in transit is flagged for maintenance after its return instead
 of interrupting an active route. Record completed work with
 `POST /api/vehicles/{id}/maintenance` and body
-`{"componentKey":"engine-oil-filter","performedAt":"2026-10-01T08:00:00Z","odometerKm":123456}`.
+`{"componentKey":"engine-oil-filter","performedAt":"2026-10-01T08:00:00Z","odometerKm":123456,"costEur":250.00}`.
 The date and odometer are the values from when the operation actually took
 place. Vehicles without service history for a fixed-interval component remain
 unavailable until that operation is recorded.
@@ -130,9 +133,23 @@ Example create request:
 ```
 
 Vans, rigid trucks, and articulated trucks can use only their matching trailer
-category. An articulated truck always requires a trailer. Vans and rigid trucks
-use a trailer only when their own weight or volume capacity is insufficient. The
-backend selects a compatible trailer that fits the remaining load, preferring
-the smallest weight-capacity surplus and then the smallest volume-capacity
-surplus. Driver license categories are checked against the vehicle/trailer
-combination.
+compatibility class. An articulated truck always requires a trailer. Vans and
+rigid trucks require one when the load exceeds the vehicle's capacity or the
+cargo needs specialist equipment. Trailer categories include general, chilled,
+hazardous, tanker, flatbed, low-loader, container, bulk, and livestock equipment.
+The route planner offers compatible available trailers; the backend validates
+the vehicle class, cargo category, capacity, license, and schedule.
+
+## Finance
+
+The Finance page reports delivered-freight revenue less recorded vehicle
+maintenance costs in EUR, with date filtering, revenue and maintenance trends,
+driver gross contribution, vehicle profitability, cost/category breakdowns, and
+estimated freight margins. Revenue is recorded on each freight item; service
+cost is recorded with each maintenance operation. Historical records without
+those amounts remain explicitly unpriced/uncosted. Fuel, wages, tolls, insurance,
+and other unrecorded costs are excluded from net profit. Driver figures are gross
+freight contribution, not driver profit. Freight-level maintenance is an
+estimate allocated to completed routes by distance and then split equally among
+the route's freight. Route revenue is dated by departure; maintenance is dated
+by service date.

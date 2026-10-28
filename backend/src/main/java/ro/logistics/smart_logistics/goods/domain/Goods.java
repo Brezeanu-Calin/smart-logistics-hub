@@ -10,6 +10,8 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
+import java.math.BigDecimal;
+
 @Entity
 @Table(
         name = "goods",
@@ -36,6 +38,9 @@ public class Goods {
     @Column(name = "weight_kg", nullable = false)
     private Double weightKg;
 
+    @Column(name = "revenue_eur", precision = 12, scale = 2)
+    private BigDecimal revenueEur;
+
     @Column(name = "volume_m3", nullable = false)
     private Double volumeM3;
 
@@ -58,12 +63,13 @@ public class Goods {
             GoodsType goodsType,
             String description,
             Double weightKg,
+            BigDecimal revenueEur,
             Double volumeM3,
             String pickupCity,
             String deliveryCity
     ) {
         this.trackingCode = trackingCode;
-        updateDetails(clientName, goodsType, description, weightKg, volumeM3, pickupCity, deliveryCity);
+        updateDetails(clientName, goodsType, description, weightKg, revenueEur, volumeM3, pickupCity, deliveryCity);
     }
 
     public void updateDetails(
@@ -71,6 +77,7 @@ public class Goods {
             GoodsType goodsType,
             String description,
             Double weightKg,
+            BigDecimal revenueEur,
             Double volumeM3,
             String pickupCity,
             String deliveryCity
@@ -79,6 +86,7 @@ public class Goods {
         this.goodsType = goodsType;
         this.description = description;
         this.weightKg = weightKg;
+        this.revenueEur = revenueEur;
         this.volumeM3 = volumeM3;
         this.pickupCity = pickupCity;
         this.deliveryCity = deliveryCity;
@@ -139,6 +147,10 @@ public class Goods {
 
     public Double getWeightKg() {
         return weightKg;
+    }
+
+    public BigDecimal getRevenueEur() {
+        return revenueEur;
     }
 
     public Double getVolumeM3() {

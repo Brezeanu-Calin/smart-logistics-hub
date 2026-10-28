@@ -12,6 +12,15 @@ public record RouteCreateRequest(
         @NotNull @Positive Long driverId,
         @NotNull @Positive Long vehicleId,
         @NotNull OffsetDateTime departureTime,
-        @NotEmpty List<@Valid RouteStopRequest> stops
+        @NotEmpty List<@Valid RouteStopRequest> stops,
+        @Positive Long trailerId
 ) {
+    public RouteCreateRequest(
+            Long driverId,
+            Long vehicleId,
+            OffsetDateTime departureTime,
+            List<RouteStopRequest> stops
+    ) {
+        this(driverId, vehicleId, departureTime, stops, null);
+    }
 }

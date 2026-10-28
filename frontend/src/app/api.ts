@@ -45,6 +45,7 @@ export interface VehicleMaintenanceComponent {
   healthPercent: number | null
   distanceRemainingKm: number | null
   daysRemaining: number | null
+  lastCostEur: number | null
 }
 
 export interface VehicleRequest {
@@ -59,6 +60,33 @@ export interface VehicleRequest {
   transmissionType: Vehicle['transmissionType']
 }
 
+export interface Trailer {
+  id: number
+  licensePlate: string
+  trailerType: 'VAN_TRAILER' | 'RIGID_TRUCK_TRAILER' | 'ARTICULATED_TRUCK_TRAILER'
+    | 'BOX_TRAILER' | 'CURTAIN_SIDE_TRAILER' | 'REFRIGERATED_TRAILER' | 'HAZARDOUS_TRAILER'
+    | 'TANKER_TRAILER' | 'FLATBED_TRAILER' | 'LOW_LOADER_TRAILER' | 'CONTAINER_CHASSIS_TRAILER'
+    | 'BULK_TIPPER_TRAILER' | 'LIVESTOCK_TRAILER'
+  compatibleVehicleType: Vehicle['vehicleType']
+  make: string
+  model: string
+  year: number
+  maxWeightCapacityKg: number
+  maxVolumeM3: number
+  status: 'AVAILABLE' | 'IN_TRANSIT' | 'MAINTENANCE'
+}
+
+export interface TrailerRequest {
+  licensePlate: string
+  trailerType: Trailer['trailerType']
+  compatibleVehicleType: Vehicle['vehicleType']
+  make: string
+  model: string
+  year: number
+  maxWeightCapacityKg: number
+  maxVolumeM3: number
+}
+
 export interface WarehouseConfig {
   warehouseCity: string
 }
@@ -67,9 +95,11 @@ export interface Goods {
   id: number
   trackingCode: string
   clientName: string
-  goodsType: 'GENERAL' | 'REFRIGERATED' | 'HAZARDOUS'
+  goodsType: 'GENERAL' | 'REFRIGERATED' | 'HAZARDOUS' | 'OVERSIZED' | 'BULK' | 'LIQUID'
+    | 'CONTAINERIZED' | 'VEHICLES' | 'LIVESTOCK'
   description: string | null
   weightKg: number
+  revenueEur: number | null
   volumeM3: number
   pickupCity: string
   deliveryCity: string
@@ -81,6 +111,7 @@ export interface GoodsRequest {
   goodsType: Goods['goodsType']
   description: string | null
   weightKg: number
+  revenueEur: number
   volumeM3: number
   pickupCity: string
   deliveryCity: string
@@ -135,6 +166,46 @@ export interface RouteCreateRequest {
   vehicleId: number
   departureTime: string
   stops: { goodsId: number; type: RouteStop['type'] }[]
+  trailerId: number | null
+}
+
+export interface FinanceResponse {
+  from: string
+  to: string
+  freightRevenueEur: number
+  maintenanceCostsEur: number
+  netProfitEur: number
+  deliveredFreightCount: number
+  unpricedFreightCount: number
+  uncostedMaintenanceCount: number
+  trend: { period: string; revenueEur: number; maintenanceCostsEur: number }[]
+  drivers: {
+    driverId: number
+    driverName: string
+    grossContributionEur: number
+    deliveredFreightCount: number
+  }[]
+  vehicles: {
+    vehicleId: number
+    licensePlate: string
+    freightRevenueEur: number
+    maintenanceCostsEur: number
+    netProfitEur: number
+  }[]
+  maintenanceByCategory: { category: string; costEur: number; operationCount: number }[]
+  freightByCategory: { category: string; revenueEur: number; shipmentCount: number }[]
+  freightMargins: {
+    freightId: number
+    trackingCode: string
+    clientName: string
+    category: string
+    driverName: string
+    vehicleLicensePlate: string
+    revenueEur: number | null
+    estimatedMaintenanceEur: number
+    estimatedMarginEur: number | null
+    estimatedMarginPercent: number | null
+  }[]
 }
 
 export function getErrorMessage(error: unknown): string {

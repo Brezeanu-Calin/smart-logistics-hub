@@ -23,7 +23,6 @@ import ro.logistics.smart_logistics.route.dto.RouteStopResponse;
 import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 import ro.logistics.smart_logistics.trailer.domain.Trailer;
 import ro.logistics.smart_logistics.trailer.domain.TrailerStatus;
-import ro.logistics.smart_logistics.trailer.domain.TrailerType;
 import ro.logistics.smart_logistics.trailer.persistence.TrailerRepository;
 import ro.logistics.smart_logistics.vehicle.application.VehicleNotFoundException;
 import ro.logistics.smart_logistics.vehicle.domain.Vehicle;
@@ -190,10 +189,12 @@ public class RouteService {
 
         Trailer trailer = selectTrailer(
                 vehicle,
+                goods,
                 totalWeight,
                 totalVolume,
                 request.departureTime(),
-                estimatedReturnTime
+                estimatedReturnTime,
+                request.trailerId()
         );
         ensureDriverLicense(driver, vehicle.getVehicleType(), trailer != null);
 
@@ -377,31 +378,46 @@ public class RouteService {
 
     private Trailer selectTrailer(
             Vehicle vehicle,
+            List<Goods> goods,
             BigDecimal goodsWeight,
             BigDecimal goodsVolume,
             OffsetDateTime departureTime,
-            OffsetDateTime arrivalTime
+            OffsetDateTime arrivalTime,
+            Long requestedTrailerId
     ) {
-        TrailerType compatibleTrailerType = trailerTypeFor(vehicle.getVehicleType());
         BigDecimal vehicleWeight = BigDecimal.valueOf(vehicle.getMaxWeightCapacityKg());
         BigDecimal vehicleVolume = BigDecimal.valueOf(vehicle.getMaxVolumeM3());
         boolean vehicleFits = goodsWeight.compareTo(vehicleWeight) <= 0
                 && goodsVolume.compareTo(vehicleVolume) <= 0;
-        boolean trailerRequired = vehicle.getVehicleType() == VehicleType.ARTICULATED_TRUCK || !vehicleFits;
-        if (!trailerRequired) {
+        boolean specializedCargo = goods.stream().anyMatch(item -> item.getGoodsType().requiresSpecializedTrailer());
+        boolean trailerRequired = vehicle.getVehicleType() == VehicleType.ARTICULATED_TRUCK
+                || !vehicleFits
+                || specializedCargo;
+        if (!trailerRequired && requestedTrailerId == null) {
             return null;
         }
 
-        BigDecimal remainingWeight = goodsWeight.subtract(vehicleWeight).max(BigDecimal.ZERO);
-        BigDecimal remainingVolume = goodsVolume.subtract(vehicleVolume).max(BigDecimal.ZERO);
-        List<Trailer> candidates = trailerRepository.findAllForPlanning(
-                compatibleTrailerType,
-                List.of(TrailerStatus.AVAILABLE, TrailerStatus.IN_TRANSIT)
-        );
+        BigDecimal requiredWeight = specializedCargo
+                ? goodsWeight
+                : goodsWeight.subtract(vehicleWeight).max(BigDecimal.ZERO);
+        BigDecimal requiredVolume = specializedCargo
+                ? goodsVolume
+                : goodsVolume.subtract(vehicleVolume).max(BigDecimal.ZERO);
+        List<Trailer> candidates = requestedTrailerId == null
+                ? trailerRepository.findAllForPlanning(
+                        vehicle.getVehicleType(),
+                        List.of(TrailerStatus.AVAILABLE)
+                )
+                : List.of(trailerRepository.findByIdForUpdate(requestedTrailerId)
+                        .orElseThrow(() -> new RouteConflictException(
+                                "Selected trailer " + requestedTrailerId + " does not exist."
+                        )));
         Trailer selected = candidates.stream()
-                .filter(trailer -> trailer.getStatus() == TrailerStatus.AVAILABLE
-                        || trailer.getStatus() == TrailerStatus.IN_TRANSIT)
-                .filter(trailer -> fitsTrailer(trailer, remainingWeight, remainingVolume))
+                .filter(trailer -> trailer.getStatus() == TrailerStatus.AVAILABLE)
+                .filter(trailer -> trailer.getCompatibleVehicleType() == vehicle.getVehicleType())
+                .filter(trailer -> goods.stream()
+                        .allMatch(item -> trailer.getTrailerType().supports(item.getGoodsType())))
+                .filter(trailer -> fitsTrailer(trailer, requiredWeight, requiredVolume))
                 .filter(trailer -> !routeRepository.existsTrailerScheduleOverlap(
                         trailer.getId(), SCHEDULED_STATUSES, departureTime, arrivalTime
                 ))
@@ -410,14 +426,16 @@ public class RouteService {
                 ))
                 .min(Comparator
                         .comparing((Trailer trailer) ->
-                                BigDecimal.valueOf(trailer.getMaxWeightCapacityKg()).subtract(remainingWeight))
+                                BigDecimal.valueOf(trailer.getMaxWeightCapacityKg()).subtract(requiredWeight))
                         .thenComparing(trailer ->
-                                BigDecimal.valueOf(trailer.getMaxVolumeM3()).subtract(remainingVolume))
+                                BigDecimal.valueOf(trailer.getMaxVolumeM3()).subtract(requiredVolume))
                         .thenComparing(Trailer::getLicensePlate))
                 .orElse(null);
         if (selected == null) {
             throw new RouteConflictException(
-                    "No available compatible trailer can carry the goods within the route schedule."
+                    requestedTrailerId == null
+                            ? "No available compatible trailer can carry the goods within the route schedule."
+                            : "The selected trailer is unavailable, incompatible with this vehicle or freight, over capacity, or already scheduled."
             );
         }
         return selected;
@@ -479,14 +497,6 @@ public class RouteService {
                     "The driver does not hold the required " + required + " license category."
             );
         }
-    }
-
-    private static TrailerType trailerTypeFor(VehicleType type) {
-        return switch (type) {
-            case VAN -> TrailerType.VAN_TRAILER;
-            case RIGID_TRUCK -> TrailerType.RIGID_TRUCK_TRAILER;
-            case ARTICULATED_TRUCK -> TrailerType.ARTICULATED_TRUCK_TRAILER;
-        };
     }
 
     private static Set<Long> validateStops(List<RouteStopRequest> stops) {

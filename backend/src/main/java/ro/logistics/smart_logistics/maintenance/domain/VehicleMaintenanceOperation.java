@@ -12,6 +12,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 @Entity
@@ -34,6 +35,9 @@ public class VehicleMaintenanceOperation {
     @Column(name = "odometer_km", nullable = false)
     private Integer odometerKm;
 
+    @Column(name = "cost_eur", precision = 12, scale = 2)
+    private BigDecimal costEur;
+
     protected VehicleMaintenanceOperation() {
     }
 
@@ -41,12 +45,14 @@ public class VehicleMaintenanceOperation {
             Vehicle vehicle,
             String componentKey,
             OffsetDateTime performedAt,
-            Integer odometerKm
+            Integer odometerKm,
+            BigDecimal costEur
     ) {
         this.vehicle = vehicle;
         this.componentKey = componentKey;
         this.performedAt = performedAt;
         this.odometerKm = odometerKm;
+        this.costEur = costEur;
     }
 
     public Long getId() {
@@ -63,5 +69,13 @@ public class VehicleMaintenanceOperation {
 
     public Integer getOdometerKm() {
         return odometerKm;
+    }
+
+    public Vehicle getVehicle() {
+        return vehicle;
+    }
+
+    public BigDecimal getCostEur() {
+        return costEur;
     }
 }

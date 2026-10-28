@@ -5,6 +5,7 @@ import ro.logistics.smart_logistics.driver.application.DriverNotFoundException;
 import ro.logistics.smart_logistics.driver.application.DriverScheduledException;
 import ro.logistics.smart_logistics.driver.application.DuplicateDriverEmailException;
 import ro.logistics.smart_logistics.driver.application.InvalidDriverStatusException;
+import ro.logistics.smart_logistics.finance.application.InvalidFinanceRangeException;
 import ro.logistics.smart_logistics.goods.application.DuplicateGoodsTrackingCodeException;
 import ro.logistics.smart_logistics.goods.application.GoodsLockedException;
 import ro.logistics.smart_logistics.goods.application.GoodsInUseException;
@@ -17,6 +18,7 @@ import ro.logistics.smart_logistics.route.application.RouteNotFoundException;
 import ro.logistics.smart_logistics.route.application.RoutingUnavailableException;
 import ro.logistics.smart_logistics.trailer.application.DuplicateTrailerLicensePlateException;
 import ro.logistics.smart_logistics.trailer.application.InvalidTrailerStatusException;
+import ro.logistics.smart_logistics.trailer.application.InvalidTrailerConfigurationException;
 import ro.logistics.smart_logistics.trailer.application.TrailerInUseException;
 import ro.logistics.smart_logistics.trailer.application.TrailerNotFoundException;
 import ro.logistics.smart_logistics.vehicle.application.DuplicateVehicleLicensePlateException;
@@ -93,13 +95,13 @@ public class ApiExceptionHandler {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 
-    @ExceptionHandler(InvalidTrailerStatusException.class)
-    public ResponseEntity<ApiError> handleInvalidTrailerStatus(InvalidTrailerStatusException exception) {
+    @ExceptionHandler({InvalidTrailerStatusException.class, InvalidTrailerConfigurationException.class})
+    public ResponseEntity<ApiError> handleInvalidTrailerStatus(RuntimeException exception) {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 
-    @ExceptionHandler(InvalidRouteException.class)
-    public ResponseEntity<ApiError> handleInvalidRoute(InvalidRouteException exception) {
+    @ExceptionHandler({InvalidRouteException.class, InvalidFinanceRangeException.class})
+    public ResponseEntity<ApiError> handleInvalidRoute(RuntimeException exception) {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 

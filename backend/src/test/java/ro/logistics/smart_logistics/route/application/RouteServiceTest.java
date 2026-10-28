@@ -142,13 +142,13 @@ class RouteServiceTest {
         setId(vehicle, 2L);
         Goods goods = goods(3L, 9000.0, 15.0);
         Trailer trailer = new Trailer(
-                "TR-1", TrailerType.VAN_TRAILER, "Make", "Model", 2021, 5000.0, 10.0
+                "TR-1", TrailerType.VAN_TRAILER, VehicleType.VAN, "Make", "Model", 2021, 5000.0, 10.0
         );
         setId(trailer, 4L);
         prepareBasicCreate(driver, vehicle, goods);
         when(trailerRepository.findAllForPlanning(
-                TrailerType.VAN_TRAILER,
-                List.of(TrailerStatus.AVAILABLE, TrailerStatus.IN_TRANSIT)
+                VehicleType.VAN,
+                List.of(TrailerStatus.AVAILABLE)
         ))
                 .thenReturn(List.of(trailer));
         when(routeRepository.existsTrailerScheduleOverlap(
@@ -171,13 +171,14 @@ class RouteServiceTest {
         setId(vehicle, 2L);
         Goods goods = goods(3L, 1000.0, 5.0);
         Trailer trailer = new Trailer(
-                "SEMI-1", TrailerType.ARTICULATED_TRUCK_TRAILER, "Make", "Trailer", 2021, 1000.0, 5.0
+                "SEMI-1", TrailerType.ARTICULATED_TRUCK_TRAILER, VehicleType.ARTICULATED_TRUCK,
+                "Make", "Trailer", 2021, 1000.0, 5.0
         );
         setId(trailer, 4L);
         prepareBasicCreate(driver, vehicle, goods);
         when(trailerRepository.findAllForPlanning(
-                TrailerType.ARTICULATED_TRUCK_TRAILER,
-                List.of(TrailerStatus.AVAILABLE, TrailerStatus.IN_TRANSIT)
+                VehicleType.ARTICULATED_TRUCK,
+                List.of(TrailerStatus.AVAILABLE)
         )).thenReturn(List.of(trailer));
         when(routeRepository.existsTrailerScheduleOverlap(
                 eq(4L), anyList(), any(OffsetDateTime.class), any(OffsetDateTime.class)
@@ -506,6 +507,7 @@ class RouteServiceTest {
                 GoodsType.GENERAL,
                 null,
                 weight,
+                java.math.BigDecimal.valueOf(100),
                 volume,
                 "Pickup",
                 "Delivery"

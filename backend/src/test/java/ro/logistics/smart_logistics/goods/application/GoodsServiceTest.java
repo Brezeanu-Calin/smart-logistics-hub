@@ -125,6 +125,7 @@ class GoodsServiceTest {
                 GoodsType.GENERAL,
                 null,
                 0.0,
+                java.math.BigDecimal.ZERO,
                 10.0,
                 "Cluj",
                 "Bucharest"
@@ -150,6 +151,7 @@ class GoodsServiceTest {
                 GoodsType.GENERAL,
                 null,
                 2500.0,
+                java.math.BigDecimal.valueOf(250),
                 10.0,
                 pickupCity,
                 deliveryCity
@@ -163,6 +165,7 @@ class GoodsServiceTest {
                 GoodsType.GENERAL,
                 null,
                 2500.0,
+                java.math.BigDecimal.valueOf(250),
                 10.0,
                 "Cluj",
                 "Bucharest"

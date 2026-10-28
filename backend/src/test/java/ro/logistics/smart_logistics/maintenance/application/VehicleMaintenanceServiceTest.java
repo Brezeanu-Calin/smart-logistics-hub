@@ -47,7 +47,8 @@ class VehicleMaintenanceServiceTest {
                 vehicle,
                 "engine-oil-filter",
                 now.minusMonths(11),
-                vehicle.getCurrentMileageKm() - 14_000
+                vehicle.getCurrentMileageKm() - 14_000,
+                java.math.BigDecimal.valueOf(120)
         ));
         when(operationRepository.findAllByVehicle_IdOrderByPerformedAtDescIdDesc(1L)).thenReturn(history);
 
@@ -71,7 +72,8 @@ class VehicleMaintenanceServiceTest {
                 vehicle,
                 "engine-oil-filter",
                 now.minusMonths(11),
-                vehicle.getCurrentMileageKm() - 14_000
+                vehicle.getCurrentMileageKm() - 14_000,
+                java.math.BigDecimal.valueOf(120)
         ));
         when(operationRepository.findAllByVehicle_IdOrderByPerformedAtDescIdDesc(1L)).thenReturn(history);
 
@@ -109,7 +111,8 @@ class VehicleMaintenanceServiceTest {
                     vehicle,
                     definition.key(),
                     now.minusDays(30),
-                    vehicle.getCurrentMileageKm()
+                    vehicle.getCurrentMileageKm(),
+                    java.math.BigDecimal.valueOf(120)
             ));
         }
         return history;

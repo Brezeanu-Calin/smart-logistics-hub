@@ -56,6 +56,7 @@ public class GoodsService {
                 dto.goodsType(),
                 normalizeOptional(dto.description()),
                 dto.weightKg(),
+                dto.revenueEur(),
                 dto.volumeM3(),
                 normalize(dto.pickupCity()),
                 normalize(dto.deliveryCity())
@@ -72,6 +73,7 @@ public class GoodsService {
                 dto.goodsType(),
                 normalizeOptional(dto.description()),
                 dto.weightKg(),
+                dto.revenueEur(),
                 dto.volumeM3(),
                 normalize(dto.pickupCity()),
                 normalize(dto.deliveryCity())
@@ -86,6 +88,7 @@ public class GoodsService {
                 source.getGoodsType(),
                 source.getDescription(),
                 source.getWeightKg(),
+                source.getRevenueEur(),
                 source.getVolumeM3(),
                 source.getPickupCity(),
                 source.getDeliveryCity()
@@ -145,6 +148,10 @@ public class GoodsService {
         if (dto.volumeM3() == null || !Double.isFinite(dto.volumeM3()) || dto.volumeM3() <= 0) {
             throw new InvalidGoodsException("Volume must be a finite value greater than zero.");
         }
+        if (dto.revenueEur() != null && (dto.revenueEur().signum() < 0
+                || dto.revenueEur().scale() > 2 || dto.revenueEur().precision() > 12)) {
+            throw new InvalidGoodsException("Freight revenue must be a non-negative EUR amount with at most two decimals.");
+        }
         if (isBlank(dto.pickupCity()) || isBlank(dto.deliveryCity())) {
             throw new InvalidGoodsException("Pickup and delivery cities are required.");
         }
@@ -193,6 +200,7 @@ public class GoodsService {
                 goods.getGoodsType(),
                 goods.getDescription(),
                 goods.getWeightKg(),
+                goods.getRevenueEur(),
                 goods.getVolumeM3(),
                 goods.getPickupCity(),
                 goods.getDeliveryCity(),

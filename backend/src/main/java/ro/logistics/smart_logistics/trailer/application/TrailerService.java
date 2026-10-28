@@ -7,6 +7,7 @@ import ro.logistics.smart_logistics.trailer.domain.TrailerStatus;
 import ro.logistics.smart_logistics.trailer.dto.TrailerRequest;
 import ro.logistics.smart_logistics.trailer.dto.TrailerResponse;
 import ro.logistics.smart_logistics.trailer.persistence.TrailerRepository;
+import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -46,6 +47,7 @@ public class TrailerService {
         Trailer trailer = new Trailer(
                 plate,
                 request.trailerType(),
+                compatibleVehicleType(request),
                 request.make().trim(),
                 request.model().trim(),
                 request.year(),
@@ -63,6 +65,7 @@ public class TrailerService {
         trailer.updateDetails(
                 plate,
                 request.trailerType(),
+                compatibleVehicleType(request),
                 request.make().trim(),
                 request.model().trim(),
                 request.year(),
@@ -137,11 +140,24 @@ public class TrailerService {
         return plate.trim().toUpperCase(Locale.ROOT);
     }
 
+    private static VehicleType compatibleVehicleType(TrailerRequest request) {
+        if (request.compatibleVehicleType() != null) {
+            return request.compatibleVehicleType();
+        }
+        return switch (request.trailerType()) {
+            case VAN_TRAILER -> VehicleType.VAN;
+            case RIGID_TRUCK_TRAILER -> VehicleType.RIGID_TRUCK;
+            case ARTICULATED_TRUCK_TRAILER -> VehicleType.ARTICULATED_TRUCK;
+            default -> throw new InvalidTrailerConfigurationException();
+        };
+    }
+
     private static TrailerResponse toResponse(Trailer trailer) {
         return new TrailerResponse(
                 trailer.getId(),
                 trailer.getLicensePlate(),
                 trailer.getTrailerType(),
+                trailer.getCompatibleVehicleType(),
                 trailer.getMake(),
                 trailer.getModel(),
                 trailer.getYear(),

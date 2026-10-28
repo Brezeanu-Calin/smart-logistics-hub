@@ -1,5 +1,7 @@
 package ro.logistics.smart_logistics.trailer.domain;
 
+import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
+
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -31,6 +33,10 @@ public class Trailer {
     @Column(name = "trailer_type", nullable = false, length = 32)
     private TrailerType trailerType;
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "compatible_vehicle_type", nullable = false, length = 30)
+    private VehicleType compatibleVehicleType;
+
     @Column(nullable = false, length = 100)
     private String make;
 
@@ -56,6 +62,7 @@ public class Trailer {
     public Trailer(
             String licensePlate,
             TrailerType trailerType,
+            VehicleType compatibleVehicleType,
             String make,
             String model,
             Integer year,
@@ -64,6 +71,7 @@ public class Trailer {
     ) {
         this.licensePlate = licensePlate;
         this.trailerType = trailerType;
+        this.compatibleVehicleType = compatibleVehicleType;
         this.make = make;
         this.model = model;
         this.year = year;
@@ -82,6 +90,7 @@ public class Trailer {
     public void updateDetails(
             String licensePlate,
             TrailerType trailerType,
+            VehicleType compatibleVehicleType,
             String make,
             String model,
             Integer year,
@@ -90,6 +99,7 @@ public class Trailer {
     ) {
         this.licensePlate = licensePlate;
         this.trailerType = trailerType;
+        this.compatibleVehicleType = compatibleVehicleType;
         this.make = make;
         this.model = model;
         this.year = year;
@@ -122,6 +132,10 @@ public class Trailer {
 
     public TrailerType getTrailerType() {
         return trailerType;
+    }
+
+    public VehicleType getCompatibleVehicleType() {
+        return compatibleVehicleType;
     }
 
     public String getMake() {

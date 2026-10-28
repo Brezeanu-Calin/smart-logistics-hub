@@ -69,7 +69,8 @@ public class VehicleMaintenanceService {
                 vehicle,
                 definition.key(),
                 request.performedAt(),
-                request.odometerKm()
+                request.odometerKm(),
+                request.costEur()
         ));
         updateAutomaticMaintenanceState(vehicle, OffsetDateTime.now());
         return vehicleRepository.saveAndFlush(vehicle);
@@ -159,6 +160,7 @@ public class VehicleMaintenanceService {
                     definition.inspectionNote(),
                     latest == null ? null : latest.getPerformedAt(),
                     latest == null ? null : latest.getOdometerKm(),
+                    latest == null ? null : latest.getCostEur(),
                     health,
                     remainingKm,
                     remainingDays
