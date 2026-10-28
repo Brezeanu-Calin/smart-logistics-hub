@@ -76,6 +76,29 @@ public class VehicleMaintenanceService {
         return vehicleRepository.saveAndFlush(vehicle);
     }
 
+    public void completeMaintenance(Vehicle vehicle) {
+        if (vehicle.getStatus() == VehicleStatus.IN_TRANSIT
+                || routeRepository.existsByVehicle_IdAndStatusIn(vehicle.getId(), SCHEDULED_ROUTE_STATUSES)) {
+            throw new InvalidVehicleStatusException(
+                    "Maintenance cannot be completed while the vehicle is assigned to a planned or active route."
+            );
+        }
+
+        OffsetDateTime completedAt = OffsetDateTime.now();
+        List<VehicleMaintenanceOperation> completedOperations = VehicleMaintenanceCatalog.forVehicle(vehicle).stream()
+                .filter(VehicleMaintenanceCatalog.Definition::hasHealthInterval)
+                .map(definition -> new VehicleMaintenanceOperation(
+                        vehicle,
+                        definition.key(),
+                        completedAt,
+                        vehicle.getCurrentMileageKm(),
+                        null
+                ))
+                .toList();
+        operationRepository.saveAll(completedOperations);
+        vehicle.clearAutomaticMaintenance();
+    }
+
     public void updateAutomaticMaintenanceState(Vehicle vehicle, OffsetDateTime now) {
         List<VehicleMaintenanceComponentResponse> components =
                 componentResponses(vehicle, operationsFor(vehicle), now);

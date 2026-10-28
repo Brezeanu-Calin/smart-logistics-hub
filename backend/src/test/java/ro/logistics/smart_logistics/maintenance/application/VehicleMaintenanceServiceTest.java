@@ -20,9 +20,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -81,6 +84,28 @@ class VehicleMaintenanceServiceTest {
 
         assertEquals(VehicleStatus.MAINTENANCE, vehicle.getStatus());
         assertTrue(vehicle.isMaintenanceAutoTriggered());
+    }
+
+    @Test
+    void completingMaintenanceRecordsAllHealthTrackedComponentsAndMakesVehicleAvailable() throws Exception {
+        Vehicle vehicle = vehicle();
+        vehicle.markMaintenance();
+
+        maintenanceService.completeMaintenance(vehicle);
+
+        int healthTrackedComponents = (int) VehicleMaintenanceCatalog.forVehicle(vehicle).stream()
+                .filter(VehicleMaintenanceCatalog.Definition::hasHealthInterval)
+                .count();
+        verify(operationRepository).saveAll(argThat(operations -> {
+            List<VehicleMaintenanceOperation> completedOperations =
+                    StreamSupport.stream(operations.spliterator(), false).toList();
+            return completedOperations.size() == healthTrackedComponents
+                    && completedOperations.stream().allMatch(operation ->
+                    operation.getOdometerKm().equals(vehicle.getCurrentMileageKm())
+                            && operation.getCostEur() == null);
+        }));
+        assertEquals(VehicleStatus.AVAILABLE, vehicle.getStatus());
+        assertTrue(!vehicle.isMaintenanceAutoTriggered());
     }
 
     @Test

@@ -105,13 +105,10 @@ public class VehicleService {
             );
         }
         ensureNotScheduled(vehicle);
-        maintenanceService.updateAutomaticMaintenanceState(vehicle, OffsetDateTime.now());
-        if (status == VehicleStatus.AVAILABLE
-                && vehicle.getStatus() == VehicleStatus.MAINTENANCE
-                && vehicle.isMaintenanceAutoTriggered()) {
-            throw new InvalidVehicleStatusException(
-                    "The vehicle cannot be marked available until all maintenance healthbars are above 10%."
-            );
+        OffsetDateTime now = OffsetDateTime.now();
+        maintenanceService.updateAutomaticMaintenanceState(vehicle, now);
+        if (status == VehicleStatus.AVAILABLE && vehicle.getStatus() == VehicleStatus.MAINTENANCE) {
+            maintenanceService.completeMaintenance(vehicle);
         }
         try {
             vehicle.updateDispatcherManagedStatus(status);

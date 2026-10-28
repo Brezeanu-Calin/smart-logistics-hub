@@ -1,4 +1,6 @@
 ALTER TABLE goods ADD revenue_eur DECIMAL(12, 2) NULL;
+GO
+
 ALTER TABLE goods ADD CONSTRAINT ck_goods_revenue_eur CHECK (revenue_eur IS NULL OR revenue_eur >= 0);
 
 ALTER TABLE goods DROP CONSTRAINT ck_goods_type;
@@ -17,6 +19,8 @@ ALTER TABLE goods ADD CONSTRAINT ck_goods_type CHECK (
 );
 
 ALTER TABLE vehicle_maintenance_operations ADD cost_eur DECIMAL(12, 2) NULL;
+GO
+
 ALTER TABLE vehicle_maintenance_operations ADD CONSTRAINT ck_vehicle_maintenance_cost_eur
     CHECK (cost_eur IS NULL OR cost_eur >= 0);
 CREATE INDEX ix_vehicle_maintenance_performed_at
@@ -25,6 +29,8 @@ CREATE INDEX ix_routes_finance_departure_time
     ON routes (departure_time);
 
 ALTER TABLE trailers ADD compatible_vehicle_type NVARCHAR(30) NULL;
+GO
+
 UPDATE trailers
 SET compatible_vehicle_type = CASE trailer_type
     WHEN 'VAN_TRAILER' THEN 'VAN'

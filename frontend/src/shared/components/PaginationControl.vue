@@ -12,6 +12,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:currentPage': [page: number]
+  'update:pageSize': [pageSize: number]
 }>()
 
 const firstItem = computed(() => props.total === 0 ? 0 : (props.currentPage - 1) * props.pageSize + 1)
@@ -26,6 +27,14 @@ function goTo(page: number) {
   <nav class="pagination-control" aria-label="Pagination">
     <span>Showing {{ firstItem }}–{{ lastItem }} of {{ total }}</span>
     <div>
+      <label>Rows
+        <select :value="pageSize" aria-label="Rows per page" @change="emit('update:pageSize', Number(($event.target as HTMLSelectElement).value))">
+          <option value="10">10</option>
+          <option value="25">25</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+      </label>
       <button :disabled="currentPage <= 1" aria-label="Previous page" @click="goTo(currentPage - 1)">←</button>
       <strong>Page {{ currentPage }} of {{ pageCount }}</strong>
       <button :disabled="currentPage >= pageCount" aria-label="Next page" @click="goTo(currentPage + 1)">→</button>

@@ -109,6 +109,10 @@ of interrupting an active route. Record completed work with
 The date and odometer are the values from when the operation actually took
 place. Vehicles without service history for a fixed-interval component remain
 unavailable until that operation is recorded.
+When a dispatcher changes a vehicle from maintenance to available, the system
+records a completed service operation for every interval-tracked component at
+the current odometer, resetting those health bars. No cost is invented; costs
+remain unset until explicitly recorded.
 
 `DELETE /api/routes/{id}` is limited to `PLANNED` and `CANCELLED` routes.
 Deleting a planned route releases its assigned freight back to `UNASSIGNED`.
