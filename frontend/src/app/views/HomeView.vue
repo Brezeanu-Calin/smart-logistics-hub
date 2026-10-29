@@ -43,6 +43,7 @@ type MaintenanceEntry = {
 }
 const DEFAULT_PAGE_SIZE = 10
 const section = ref<Section>('overview')
+const mobileMoreOpen = ref(false)
 const drivers = ref<Driver[]>([])
 const vehicles = ref<Vehicle[]>([])
 const goods = ref<Goods[]>([])
@@ -264,8 +265,15 @@ function lowestHealth(vehicle: Vehicle) {
 
 function openRoutePlanner() {
   section.value = 'routes'
+  mobileMoreOpen.value = false
   routePlannerOpen.value = true
   if (!routeForm.departureLocal) routeForm.departureLocal = defaultDepartureTime()
+}
+
+function selectMobileSection(nextSection: Section) {
+  section.value = nextSection
+  mobileMoreOpen.value = false
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 function trailerSupportsGoods(
@@ -949,7 +957,7 @@ routeForm.departureLocal = defaultDepartureTime()
     <section class="main-panel">
       <header class="topbar">
         <div class="crumb">HAULMASTER <span>/</span> {{ screenTitle }}</div>
-        <div class="topbar-right"><span class="live-dot"></span> WAREHOUSE · {{ warehouseCity }} <button class="primary-button navbar-plan-button" @click="openRoutePlanner">＋ Create a route</button><button class="refresh-button" :disabled="busy" @click="refresh" aria-label="Refresh data">↻</button></div>
+        <div class="topbar-right"><span class="live-dot"></span><span class="warehouse-label">WAREHOUSE · {{ warehouseCity }}</span><button class="primary-button navbar-plan-button" aria-label="Create a route" @click="openRoutePlanner">＋ <span class="desktop-button-label">Create a route</span><span class="mobile-button-label">Plan</span></button><button class="refresh-button" :disabled="busy" @click="refresh" aria-label="Refresh data">↻</button></div>
       </header>
 
       <div class="content">
@@ -1186,5 +1194,19 @@ routeForm.departureLocal = defaultDepartureTime()
         <footer class="page-footer">HAULMASTER DISPATCH <span>·</span> Routing and map data © OpenStreetMap contributors.</footer>
       </div>
     </section>
+    <div class="mobile-nav-dock">
+      <div v-if="mobileMoreOpen" id="mobile-more-menu" class="mobile-more-menu" role="group" aria-label="More sections">
+        <button :aria-current="section === 'maintenance' ? 'page' : undefined" @click="selectMobileSection('maintenance')"><span>⚒</span> Maintenance <b>{{ maintenanceVehicles.length }}</b></button>
+        <button :aria-current="section === 'finance' ? 'page' : undefined" @click="selectMobileSection('finance')"><span>€</span> Finance</button>
+      </div>
+      <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
+        <button :aria-current="section === 'overview' ? 'page' : undefined" @click="selectMobileSection('overview')"><span>▦</span><small>Home</small></button>
+        <button :aria-current="section === 'routes' ? 'page' : undefined" @click="selectMobileSection('routes')"><span>↗</span><small>Routes</small></button>
+        <button :aria-current="section === 'freight' ? 'page' : undefined" @click="selectMobileSection('freight')"><span>▣</span><small>Freight</small></button>
+        <button :aria-current="section === 'drivers' ? 'page' : undefined" @click="selectMobileSection('drivers')"><span>♙</span><small>Drivers</small></button>
+        <button :aria-current="section === 'fleet' ? 'page' : undefined" @click="selectMobileSection('fleet')"><span>▰</span><small>Fleet</small></button>
+        <button :aria-expanded="mobileMoreOpen" aria-controls="mobile-more-menu" :aria-current="section === 'maintenance' || section === 'finance' ? 'page' : undefined" @click="mobileMoreOpen = !mobileMoreOpen"><span>⋯</span><small>More</small></button>
+      </nav>
+    </div>
   </main>
 </template>

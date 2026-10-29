@@ -37,6 +37,16 @@ The Vue app uses `VITE_API_BASE_URL` when set and otherwise calls
 `http://localhost:8080/api`. The backend exposes `/api/config` so the frontend
 uses the same configured warehouse/depot location as route planning.
 
+## Mobile dispatch app
+
+The Vue frontend is also an installable, mobile-first PWA. Serve it over HTTPS
+(or localhost during development), then use the browser's install option on
+Android or "Add to Home Screen" on iOS. The mobile navigation provides direct
+access to routes, freight, drivers, and fleet operations; maintenance and finance
+are available under More. These screens use the same backend and validation as
+the desktop app. Route and fleet data require a network connection, and simulated
+route positions are not live GPS tracking.
+
 ## Route lifecycle
 
 The warehouse and route-planning depot default to `Cluj-Napoca, Romania`. Set

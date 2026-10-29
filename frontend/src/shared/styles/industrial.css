@@ -514,3 +514,74 @@ tbody tr:hover { background: #1f2428; }
   .maintenance-note { flex-direction: column; }
   .demo-flag { max-width: 130px; white-space: normal; }
 }
+
+.mobile-nav-dock { display: none; }
+.mobile-button-label { display: none; }
+
+@media (max-width: 760px) {
+  .sidebar .side-nav { display: none; }
+  .topbar { gap: 8px; }
+  .crumb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar-right { flex: 0 0 auto; }
+  .warehouse-label { display: none; }
+  .navbar-plan-button { min-height: 32px; padding: 0 8px; }
+  .desktop-button-label { display: none; }
+  .mobile-button-label { display: inline; }
+  .content { padding-bottom: calc(78px + env(safe-area-inset-bottom)); }
+  .mobile-nav-dock {
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 20;
+    display: block;
+    padding-bottom: env(safe-area-inset-bottom);
+    border-top: 1px solid var(--line);
+    background: #111416;
+  }
+  .mobile-bottom-nav { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .mobile-bottom-nav button {
+    display: flex;
+    min-width: 0;
+    min-height: 56px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    border: 0;
+    border-top: 2px solid transparent;
+    padding: 4px 1px;
+    color: var(--muted);
+    background: transparent;
+    font-family: "JetBrains Mono", Consolas, monospace;
+  }
+  .mobile-bottom-nav button[aria-current="page"] { border-top-color: var(--yellow); color: var(--yellow); background: #1a1c1e; }
+  .mobile-bottom-nav button > span { font-size: 15px; line-height: 17px; }
+  .mobile-bottom-nav button > small { font-size: 7px; line-height: 10px; text-transform: uppercase; }
+  .mobile-bottom-nav button:focus-visible, .mobile-more-menu button:focus-visible { outline: 2px solid var(--yellow); outline-offset: -2px; }
+  .mobile-more-menu {
+    position: absolute;
+    right: 8px;
+    bottom: calc(100% + 8px);
+    display: grid;
+    min-width: 170px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .mobile-more-menu button {
+    display: flex;
+    min-height: 46px;
+    align-items: center;
+    gap: 10px;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 0 12px;
+    color: var(--text);
+    background: transparent;
+    font: 9px "JetBrains Mono", Consolas, monospace;
+    text-align: left;
+    text-transform: uppercase;
+  }
+  .mobile-more-menu button:last-child { border-bottom: 0; }
+  .mobile-more-menu button[aria-current="page"] { color: var(--yellow); }
+  .mobile-more-menu button span { color: var(--yellow); font-size: 14px; }
+  .mobile-more-menu button b { margin-left: auto; color: var(--yellow); }
+}
