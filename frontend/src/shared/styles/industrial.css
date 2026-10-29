@@ -584,4 +584,32 @@ tbody tr:hover { background: #1f2428; }
   .mobile-more-menu button[aria-current="page"] { color: var(--yellow); }
   .mobile-more-menu button span { color: var(--yellow); font-size: 14px; }
   .mobile-more-menu button b { margin-left: auto; color: var(--yellow); }
+  .mobile-more-menu .mobile-sign-out { border-top: 1px solid var(--line); border-bottom: 0; color: #f87171; }
+  .push-feedback { max-width: 220px; padding: 9px 12px; color: var(--muted); font-size: 8px; line-height: 1.5; }
 }
+
+.mobile-login-shell {
+  display: grid;
+  min-height: 100vh;
+  min-height: 100dvh;
+  place-items: center;
+  padding: 20px;
+  color: var(--text);
+  background:
+    linear-gradient(90deg, transparent 49.9%, #171a1d 50%, transparent 50.1%),
+    linear-gradient(0deg, transparent 49.9%, #171a1d 50%, transparent 50.1%),
+    var(--asphalt);
+  background-size: 42px 42px;
+}
+.mobile-login-card { width: min(100%, 390px); border: 1px solid var(--line); padding: 24px; background: #111416; }
+.mobile-login-brand { margin: 0 0 32px; text-decoration: none; }
+.mobile-login-brand:hover { color: inherit; }
+.mobile-login-card h1 { font-size: 24px; }
+.mobile-login-description { margin-top: 8px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.mobile-login-form { display: grid; gap: 14px; margin-top: 24px; }
+.mobile-login-form label { display: grid; gap: 6px; color: #c1c7d0; font: 9px "JetBrains Mono", Consolas, monospace; text-transform: uppercase; }
+.mobile-login-form input { width: 100%; min-height: 42px; border: 1px solid #374151; border-radius: 0; padding: 9px 10px; outline: none; color: var(--text); background: #0d0f11; font: 13px "Chivo", "Segoe UI", sans-serif; text-transform: none; }
+.mobile-login-form input:focus { border-color: var(--yellow); }
+.mobile-login-form .primary-button { min-height: 42px; margin-top: 4px; }
+.mobile-login-error { border-left: 3px solid var(--red); padding: 9px 10px; color: #fca5a5; background: #261314; font-size: 11px; }
+.mobile-demo-notice { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 12px; color: #9ca3af; font-size: 9px; line-height: 1.6; }

@@ -13,8 +13,10 @@ import ro.logistics.smart_logistics.vehicle.domain.VehicleStatus;
 import ro.logistics.smart_logistics.vehicle.persistence.VehicleRepository;
 
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import ro.logistics.smart_logistics.notification.application.OperationalNotification;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -33,15 +35,18 @@ public class VehicleMaintenanceService {
     private final VehicleMaintenanceOperationRepository operationRepository;
     private final VehicleRepository vehicleRepository;
     private final RouteRepository routeRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public VehicleMaintenanceService(
             VehicleMaintenanceOperationRepository operationRepository,
             VehicleRepository vehicleRepository,
-            RouteRepository routeRepository
+            RouteRepository routeRepository,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.operationRepository = operationRepository;
         this.vehicleRepository = vehicleRepository;
         this.routeRepository = routeRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -100,6 +105,7 @@ public class VehicleMaintenanceService {
     }
 
     public void updateAutomaticMaintenanceState(Vehicle vehicle, OffsetDateTime now) {
+        boolean maintenanceWasDue = vehicle.isMaintenanceAutoTriggered();
         List<VehicleMaintenanceComponentResponse> components =
                 componentResponses(vehicle, operationsFor(vehicle), now);
         boolean maintenanceDue = components.stream()
@@ -111,6 +117,7 @@ public class VehicleMaintenanceService {
         } else if (vehicle.isMaintenanceAutoTriggered() && vehicle.getStatus() != VehicleStatus.IN_TRANSIT) {
             vehicle.clearAutomaticMaintenance();
         }
+        publishMaintenanceDue(vehicle, maintenanceWasDue);
     }
 
     @Scheduled(fixedDelayString = "${maintenance.check-interval-ms:60000}")
@@ -118,6 +125,16 @@ public class VehicleMaintenanceService {
         OffsetDateTime now = OffsetDateTime.now();
         for (Vehicle vehicle : vehicleRepository.findAllForUpdate()) {
             updateAutomaticMaintenanceState(vehicle, now);
+        }
+    }
+
+    private void publishMaintenanceDue(Vehicle vehicle, boolean maintenanceWasDue) {
+        if (!maintenanceWasDue && vehicle.isMaintenanceAutoTriggered()) {
+            eventPublisher.publishEvent(new OperationalNotification(
+                    "Vehicle maintenance due",
+                    "Vehicle " + vehicle.getLicensePlate() + " needs maintenance.",
+                    "app"
+            ));
         }
     }
 

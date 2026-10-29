@@ -44,8 +44,26 @@ The Vue frontend is also an installable, mobile-first PWA. Serve it over HTTPS
 Android or "Add to Home Screen" on iOS. The mobile navigation provides direct
 access to routes, freight, drivers, and fleet operations; maintenance and finance
 are available under More. These screens use the same backend and validation as
-the desktop app. Route and fleet data require a network connection, and simulated
-route positions are not live GPS tracking.
+the desktop app.
+
+The mobile sign-in is a **demo-only UI gate**, not real authentication. The
+prototype credentials are `driver.demo@example.com` / `1234`; they are visible
+in the frontend bundle and can be bypassed. The desktop app and every backend
+API remain unprotected, so do not expose this version as a secured service or
+use real/private data with it.
+
+Push notifications use Web Push/VAPID and are sent to every subscribed device
+when a route is planned or cancelled, a delivery is confirmed, or a vehicle
+first becomes due for maintenance. Users enable them from mobile navigation's
+More menu. Generate a VAPID keypair (for example with
+`npx web-push generate-vapid-keys --json`) and set `VAPID_PUBLIC_KEY`,
+`VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` in the backend process environment.
+Push is disabled until both keys are present; never commit the private key.
+When the frontend and backend use different origins, set
+`CORS_ALLOWED_ORIGINS` to the frontend origin. iOS requires an installed home
+screen app and a supported iOS version; push is subject to browser and OS
+permission settings. Route and fleet data still require a network connection,
+and simulated route positions are not live GPS tracking.
 
 ## Route lifecycle
 

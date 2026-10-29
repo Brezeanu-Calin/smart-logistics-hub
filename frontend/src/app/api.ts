@@ -91,6 +91,19 @@ export interface WarehouseConfig {
   warehouseCity: string
 }
 
+export interface PushConfig {
+  enabled: boolean
+  publicKey: string
+}
+
+export interface PushSubscriptionRequest {
+  endpoint: string
+  keys: {
+    p256dh: string
+    auth: string
+  }
+}
+
 export interface Goods {
   id: number
   trackingCode: string

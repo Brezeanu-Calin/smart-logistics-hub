@@ -13,6 +13,8 @@ import api, {
   type Route,
   type RouteCreateRequest,
   type RouteSimulationPosition,
+  type PushConfig,
+  type PushSubscriptionRequest,
   type Trailer,
   type TrailerRequest,
   type Vehicle,
@@ -42,8 +44,25 @@ type MaintenanceEntry = {
   costEur: string
 }
 const DEFAULT_PAGE_SIZE = 10
+function hasMobileDemoSession() {
+  try {
+    return window.localStorage.getItem('haulmaster-mobile-session') === 'active'
+  } catch (storageError) {
+    console.error('Could not read the mobile demo session.', storageError)
+    return false
+  }
+}
 const section = ref<Section>('overview')
 const mobileMoreOpen = ref(false)
+const isMobileViewport = ref(window.matchMedia('(max-width: 760px)').matches)
+const isMobileAuthenticated = ref(hasMobileDemoSession())
+const mobileLoginEmail = ref('')
+const mobileLoginPassword = ref('')
+const mobileLoginError = ref('')
+const pushConfig = ref<PushConfig>({ enabled: false, publicKey: '' })
+const pushEnabled = ref(false)
+const pushBusy = ref(false)
+const pushFeedback = ref('')
 const drivers = ref<Driver[]>([])
 const vehicles = ref<Vehicle[]>([])
 const goods = ref<Goods[]>([])
@@ -268,6 +287,180 @@ function openRoutePlanner() {
   mobileMoreOpen.value = false
   routePlannerOpen.value = true
   if (!routeForm.departureLocal) routeForm.departureLocal = defaultDepartureTime()
+}
+
+function startRefresh() {
+  if (refreshTimer !== undefined) return
+  void refresh()
+  refreshTimer = window.setInterval(() => void refresh(), 30_000)
+  simulationRefreshTimer = window.setInterval(() => void refreshSimulationPositions(), 30_000)
+}
+
+function stopRefresh() {
+  if (refreshTimer !== undefined) window.clearInterval(refreshTimer)
+  if (simulationRefreshTimer !== undefined) window.clearInterval(simulationRefreshTimer)
+  refreshTimer = undefined
+  simulationRefreshTimer = undefined
+}
+
+async function loadPushConfiguration() {
+  try {
+    const response = await api.get<PushConfig>('/notifications/config')
+    pushConfig.value = response.data
+    pushEnabled.value = false
+    if (!response.data.enabled) {
+      pushFeedback.value = 'Push notifications need VAPID keys configured on the backend.'
+      return
+    }
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+      pushFeedback.value = 'Push notifications are not supported by this browser.'
+      return
+    }
+    const registration = await navigator.serviceWorker.ready
+    const subscription = await registration.pushManager.getSubscription()
+    pushEnabled.value = subscription !== null
+    if (subscription) {
+      await registerPushSubscription(subscription)
+      pushFeedback.value = 'This device is subscribed to dispatch alerts.'
+    } else {
+      pushFeedback.value = ''
+    }
+  } catch (requestError) {
+    pushEnabled.value = false
+    pushFeedback.value = getErrorMessage(requestError)
+  }
+}
+
+function signInMobile() {
+  mobileLoginError.value = ''
+  if (
+    mobileLoginEmail.value.trim().toLowerCase() !== 'driver.demo@example.com'
+    || mobileLoginPassword.value !== '1234'
+  ) {
+    mobileLoginError.value = 'Email or password is incorrect.'
+    return
+  }
+  try {
+    window.localStorage.setItem('haulmaster-mobile-session', 'active')
+  } catch (storageError) {
+    mobileLoginError.value = getErrorMessage(storageError)
+    return
+  }
+  isMobileAuthenticated.value = true
+  mobileLoginPassword.value = ''
+  startRefresh()
+  void loadPushConfiguration()
+}
+
+function decodeApplicationServerKey(value: string) {
+  const padded = value + '='.repeat((4 - value.length % 4) % 4)
+  const binary = window.atob(padded.replace(/-/g, '+').replace(/_/g, '/'))
+  return Uint8Array.from(binary, (character) => character.charCodeAt(0))
+}
+
+function pushSubscriptionRequest(subscription: PushSubscription): PushSubscriptionRequest {
+  const json = subscription.toJSON()
+  if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) {
+    throw new Error('The browser returned an incomplete push subscription.')
+  }
+  return {
+    endpoint: json.endpoint,
+    keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
+  }
+}
+
+async function registerPushSubscription(subscription: PushSubscription) {
+  await api.post('/notifications/subscription', pushSubscriptionRequest(subscription))
+}
+
+async function enablePushNotifications() {
+  pushFeedback.value = ''
+  if (!pushConfig.value.enabled || !pushConfig.value.publicKey) {
+    pushFeedback.value = 'Push notifications are not configured on the backend.'
+    return
+  }
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    pushFeedback.value = 'Push notifications are not supported by this browser.'
+    return
+  }
+  pushBusy.value = true
+  try {
+    const permission = Notification.permission === 'granted'
+      ? 'granted'
+      : await Notification.requestPermission()
+    if (permission !== 'granted') {
+      pushFeedback.value = 'Notification permission was not granted.'
+      return
+    }
+    const registration = await navigator.serviceWorker.ready
+    const subscription = await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: decodeApplicationServerKey(pushConfig.value.publicKey),
+    })
+    await registerPushSubscription(subscription)
+    pushEnabled.value = true
+    pushFeedback.value = 'This device is subscribed to dispatch alerts.'
+  } catch (requestError) {
+    pushFeedback.value = getErrorMessage(requestError)
+  } finally {
+    pushBusy.value = false
+  }
+}
+
+async function signOutMobile() {
+  mobileMoreOpen.value = false
+  isMobileAuthenticated.value = false
+  mobileLoginEmail.value = ''
+  mobileLoginPassword.value = ''
+  pushEnabled.value = false
+  pushFeedback.value = ''
+  stopRefresh()
+  try {
+    window.localStorage.removeItem('haulmaster-mobile-session')
+  } catch (storageError) {
+    console.error('Could not clear the mobile demo session.', storageError)
+  }
+  try {
+    const registration = await navigator.serviceWorker.ready
+    const subscription = await registration.pushManager.getSubscription()
+    if (subscription) {
+      try {
+        await api.delete('/notifications/subscription', {
+          data: pushSubscriptionRequest(subscription),
+        })
+      } finally {
+        await subscription.unsubscribe()
+      }
+    }
+  } catch (requestError) {
+    console.error('Could not fully remove the mobile push subscription during sign-out.', requestError)
+  }
+  drivers.value = []
+  vehicles.value = []
+  goods.value = []
+  routes.value = []
+  trailers.value = []
+}
+
+async function disablePushNotifications() {
+  pushFeedback.value = ''
+  pushBusy.value = true
+  try {
+    const registration = await navigator.serviceWorker.ready
+    const subscription = await registration.pushManager.getSubscription()
+    if (subscription) {
+      await api.delete('/notifications/subscription', {
+        data: pushSubscriptionRequest(subscription),
+      })
+      await subscription.unsubscribe()
+    }
+    pushEnabled.value = false
+    pushFeedback.value = 'Dispatch notifications are disabled on this device.'
+  } catch (requestError) {
+    pushFeedback.value = getErrorMessage(requestError)
+  } finally {
+    pushBusy.value = false
+  }
 }
 
 function selectMobileSection(nextSection: Section) {
@@ -518,17 +711,29 @@ async function refreshSimulationPositions() {
   }
 }
 
-let refreshTimer: number
-let simulationRefreshTimer: number
+let refreshTimer: number | undefined
+let simulationRefreshTimer: number | undefined
 let simulationRefreshInFlight = false
+const mobileViewportQuery = window.matchMedia('(max-width: 760px)')
+const handleMobileViewportChange = (event: MediaQueryListEvent) => {
+  isMobileViewport.value = event.matches
+  if (!event.matches || isMobileAuthenticated.value) {
+    startRefresh()
+    if (event.matches && isMobileAuthenticated.value) void loadPushConfiguration()
+  } else {
+    stopRefresh()
+  }
+}
 onMounted(() => {
-  void refresh()
-  refreshTimer = window.setInterval(() => void refresh(), 30_000)
-  simulationRefreshTimer = window.setInterval(() => void refreshSimulationPositions(), 30_000)
+  mobileViewportQuery.addEventListener('change', handleMobileViewportChange)
+  if (!isMobileViewport.value || isMobileAuthenticated.value) {
+    startRefresh()
+    if (isMobileViewport.value) void loadPushConfiguration()
+  }
 })
 onUnmounted(() => {
-  window.clearInterval(refreshTimer)
-  window.clearInterval(simulationRefreshTimer)
+  mobileViewportQuery.removeEventListener('change', handleMobileViewportChange)
+  stopRefresh()
   if (snackbarTimer !== undefined) window.clearTimeout(snackbarTimer)
 })
 
@@ -932,7 +1137,7 @@ routeForm.departureLocal = defaultDepartureTime()
 </script>
 
 <template>
-  <main class="app-shell">
+  <main v-if="!isMobileViewport || isMobileAuthenticated" class="app-shell">
     <aside class="sidebar">
       <a class="brand" href="#" @click.prevent="section = 'overview'">
         <span class="brand-mark"><svg viewBox="0 0 48 32" aria-hidden="true"><path d="M2 5h27v19H2zM29 11h9l8 8v5H29zM33 13v6h9" /><circle cx="11" cy="26" r="3" /><circle cx="37" cy="26" r="3" /><path d="M7 11h7m-7 5h12" /></svg></span>
@@ -1198,6 +1403,9 @@ routeForm.departureLocal = defaultDepartureTime()
       <div v-if="mobileMoreOpen" id="mobile-more-menu" class="mobile-more-menu" role="group" aria-label="More sections">
         <button :aria-current="section === 'maintenance' ? 'page' : undefined" @click="selectMobileSection('maintenance')"><span>⚒</span> Maintenance <b>{{ maintenanceVehicles.length }}</b></button>
         <button :aria-current="section === 'finance' ? 'page' : undefined" @click="selectMobileSection('finance')"><span>€</span> Finance</button>
+        <button v-if="pushConfig.enabled" :disabled="pushBusy" @click="pushEnabled ? disablePushNotifications() : enablePushNotifications()"><span>♢</span>{{ pushBusy ? 'Working…' : pushEnabled ? 'Disable notifications' : 'Enable notifications' }}</button>
+        <p v-if="pushFeedback" class="push-feedback" role="status">{{ pushFeedback }}</p>
+        <button class="mobile-sign-out" @click="signOutMobile"><span>↪</span> Sign out</button>
       </div>
       <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
         <button :aria-current="section === 'overview' ? 'page' : undefined" @click="selectMobileSection('overview')"><span>▦</span><small>Home</small></button>
@@ -1208,5 +1416,23 @@ routeForm.departureLocal = defaultDepartureTime()
         <button :aria-expanded="mobileMoreOpen" aria-controls="mobile-more-menu" :aria-current="section === 'maintenance' || section === 'finance' ? 'page' : undefined" @click="mobileMoreOpen = !mobileMoreOpen"><span>⋯</span><small>More</small></button>
       </nav>
     </div>
+  </main>
+  <main v-else class="mobile-login-shell">
+    <section class="mobile-login-card" aria-labelledby="mobile-login-title">
+      <a class="brand mobile-login-brand" href="#" @click.prevent>
+        <span class="brand-mark"><svg viewBox="0 0 48 32" aria-hidden="true"><path d="M2 5h27v19H2zM29 11h9l8 8v5H29zM33 13v6h9" /><circle cx="11" cy="26" r="3" /><circle cx="37" cy="26" r="3" /><path d="M7 11h7m-7 5h12" /></svg></span>
+        <span><strong>HAULMASTER</strong><small>Mobile dispatch</small></span>
+      </a>
+      <p class="eyebrow">MOBILE OPERATIONS</p>
+      <h1 id="mobile-login-title">Driver &amp; dispatch access</h1>
+      <p class="mobile-login-description">Sign in to view routes, manage freight, and receive dispatch alerts.</p>
+      <form class="mobile-login-form" @submit.prevent="signInMobile">
+        <label>Email address<input v-model.trim="mobileLoginEmail" type="email" autocomplete="username" inputmode="email" required></label>
+        <label>Password<input v-model="mobileLoginPassword" type="password" autocomplete="current-password" required></label>
+        <p v-if="mobileLoginError" class="mobile-login-error" role="alert">{{ mobileLoginError }}</p>
+        <button class="primary-button" type="submit">Sign in</button>
+      </form>
+      <p class="mobile-demo-notice">Prototype sign-in only. It does not secure backend API data.</p>
+    </section>
   </main>
 </template>

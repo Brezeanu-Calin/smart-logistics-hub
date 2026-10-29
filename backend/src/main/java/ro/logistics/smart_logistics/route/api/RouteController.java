@@ -5,9 +5,13 @@ import ro.logistics.smart_logistics.route.dto.RouteCreateRequest;
 import ro.logistics.smart_logistics.route.dto.RouteResponse;
 import ro.logistics.smart_logistics.route.dto.RouteSimulationPositionResponse;
 import ro.logistics.smart_logistics.route.dto.RouteStatusRequest;
+import ro.logistics.smart_logistics.notification.application.OperationalNotification;
+import ro.logistics.smart_logistics.route.domain.RouteStatus;
+import ro.logistics.smart_logistics.route.domain.RouteStopType;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -28,9 +32,11 @@ import java.util.List;
 @RequestMapping("/api/routes")
 public class RouteController {
     private final RouteService routeService;
+    private final ApplicationEventPublisher eventPublisher;
 
-    public RouteController(RouteService routeService) {
+    public RouteController(RouteService routeService, ApplicationEventPublisher eventPublisher) {
         this.routeService = routeService;
+        this.eventPublisher = eventPublisher;
     }
 
     @GetMapping
@@ -56,6 +62,11 @@ public class RouteController {
     @PostMapping
     public ResponseEntity<RouteResponse> create(@Valid @RequestBody RouteCreateRequest request) {
         RouteResponse created = routeService.create(request);
+        eventPublisher.publishEvent(new OperationalNotification(
+                "Route planned",
+                "Route #" + created.id() + " has been planned.",
+                "app"
+        ));
         URI location = ServletUriComponentsBuilder.fromCurrentRequest()
                 .path("/{id}")
                 .buildAndExpand(created.id())
@@ -68,7 +79,15 @@ public class RouteController {
             @PathVariable @Positive Long id,
             @Valid @RequestBody RouteStatusRequest request
     ) {
-        return routeService.updateStatus(id, request);
+        RouteResponse updated = routeService.updateStatus(id, request);
+        if (updated.status() == RouteStatus.CANCELLED) {
+            eventPublisher.publishEvent(new OperationalNotification(
+                    "Route cancelled",
+                    "Route #" + updated.id() + " has been cancelled.",
+                    "app"
+            ));
+        }
+        return updated;
     }
 
     @PatchMapping("/{routeId}/goods/{goodsId}/deliver")
@@ -76,7 +95,18 @@ public class RouteController {
             @PathVariable @Positive Long routeId,
             @PathVariable @Positive Long goodsId
     ) {
-        return routeService.markGoodsDelivered(routeId, goodsId);
+        RouteResponse updated = routeService.markGoodsDelivered(routeId, goodsId);
+        String trackingCode = updated.stops().stream()
+                .filter(stop -> stop.goodsId().equals(goodsId) && stop.type() == RouteStopType.DELIVERY)
+                .map(stop -> stop.trackingCode())
+                .findFirst()
+                .orElse("freight item #" + goodsId);
+        eventPublisher.publishEvent(new OperationalNotification(
+                "Delivery confirmed",
+                "Delivery confirmed for " + trackingCode + ".",
+                "app"
+        ));
+        return updated;
     }
 
     @DeleteMapping("/{id}")

@@ -2,6 +2,7 @@ package ro.logistics.smart_logistics.maintenance.application;
 
 import ro.logistics.smart_logistics.maintenance.domain.VehicleMaintenanceOperation;
 import ro.logistics.smart_logistics.maintenance.persistence.VehicleMaintenanceOperationRepository;
+import ro.logistics.smart_logistics.notification.application.OperationalNotification;
 import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 import ro.logistics.smart_logistics.vehicle.domain.Vehicle;
 import ro.logistics.smart_logistics.vehicle.domain.VehicleStatus;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.lang.reflect.Field;
 import java.time.OffsetDateTime;
@@ -24,9 +26,11 @@ import java.util.stream.StreamSupport;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
 
 @ExtendWith(MockitoExtension.class)
 class VehicleMaintenanceServiceTest {
@@ -36,6 +40,8 @@ class VehicleMaintenanceServiceTest {
     private VehicleRepository vehicleRepository;
     @Mock
     private RouteRepository routeRepository;
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     private VehicleMaintenanceService maintenanceService;
@@ -79,11 +85,14 @@ class VehicleMaintenanceServiceTest {
                 java.math.BigDecimal.valueOf(120)
         ));
         when(operationRepository.findAllByVehicle_IdOrderByPerformedAtDescIdDesc(1L)).thenReturn(history);
+        when(vehicleRepository.findAllForUpdate()).thenReturn(List.of(vehicle));
 
-        maintenanceService.updateAutomaticMaintenanceState(vehicle, now);
+        maintenanceService.checkDueMaintenance();
+        maintenanceService.checkDueMaintenance();
 
         assertEquals(VehicleStatus.MAINTENANCE, vehicle.getStatus());
         assertTrue(vehicle.isMaintenanceAutoTriggered());
+        verify(eventPublisher, times(1)).publishEvent(any(OperationalNotification.class));
     }
 
     @Test

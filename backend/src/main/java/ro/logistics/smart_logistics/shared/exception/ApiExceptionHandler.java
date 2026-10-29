@@ -27,6 +27,7 @@ import ro.logistics.smart_logistics.vehicle.application.VehicleInUseException;
 import ro.logistics.smart_logistics.vehicle.application.VehicleNotFoundException;
 import ro.logistics.smart_logistics.vehicle.application.VehicleScheduledException;
 import ro.logistics.smart_logistics.maintenance.application.InvalidMaintenanceOperationException;
+import ro.logistics.smart_logistics.notification.application.InvalidPushSubscriptionException;
 
 import jakarta.validation.ConstraintViolationException;
 import org.springframework.http.HttpStatus;
@@ -107,6 +108,11 @@ public class ApiExceptionHandler {
 
     @ExceptionHandler(InvalidGoodsException.class)
     public ResponseEntity<ApiError> handleInvalidGoods(InvalidGoodsException exception) {
+        return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(InvalidPushSubscriptionException.class)
+    public ResponseEntity<ApiError> handleInvalidPushSubscription(InvalidPushSubscriptionException exception) {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 
