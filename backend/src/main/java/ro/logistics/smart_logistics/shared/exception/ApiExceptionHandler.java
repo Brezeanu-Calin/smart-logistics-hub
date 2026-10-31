@@ -5,6 +5,8 @@ import ro.logistics.smart_logistics.driver.application.DriverNotFoundException;
 import ro.logistics.smart_logistics.driver.application.DriverScheduledException;
 import ro.logistics.smart_logistics.driver.application.DuplicateDriverEmailException;
 import ro.logistics.smart_logistics.driver.application.InvalidDriverStatusException;
+import ro.logistics.smart_logistics.assistant.application.AssistantUnavailableException;
+import ro.logistics.smart_logistics.assistant.application.InvalidAssistantRequestException;
 import ro.logistics.smart_logistics.finance.application.InvalidFinanceRangeException;
 import ro.logistics.smart_logistics.goods.application.DuplicateGoodsTrackingCodeException;
 import ro.logistics.smart_logistics.goods.application.GoodsLockedException;
@@ -124,6 +126,16 @@ public class ApiExceptionHandler {
     @ExceptionHandler(RoutingUnavailableException.class)
     public ResponseEntity<ApiError> handleRoutingUnavailable(RoutingUnavailableException exception) {
         return response(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(AssistantUnavailableException.class)
+    public ResponseEntity<ApiError> handleAssistantUnavailable(AssistantUnavailableException exception) {
+        return response(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), Map.of());
+    }
+
+    @ExceptionHandler(InvalidAssistantRequestException.class)
+    public ResponseEntity<ApiError> handleInvalidAssistantRequest(InvalidAssistantRequestException exception) {
+        return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

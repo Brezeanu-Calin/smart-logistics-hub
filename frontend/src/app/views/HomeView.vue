@@ -3,6 +3,7 @@ import { computed, defineAsyncComponent, onMounted, onUnmounted, reactive, ref, 
 import '../../shared/styles/main.css'
 import '../../shared/styles/industrial.css'
 import PaginationControl from '../../shared/components/PaginationControl.vue'
+import AssistantWidget from '../../features/assistant/components/AssistantWidget.vue'
 import api, {
   getErrorMessage,
   isApiNotFoundError,
@@ -1435,4 +1436,5 @@ routeForm.departureLocal = defaultDepartureTime()
       <p class="mobile-demo-notice">Prototype sign-in only. It does not secure backend API data.</p>
     </section>
   </main>
+  <AssistantWidget v-if="!isMobileViewport || isMobileAuthenticated" @data-changed="refresh" />
 </template>

@@ -148,7 +148,7 @@ Active and completed routes remain available as operational history; a
 cancelled route cannot be deleted while its assigned resources are still
 returning. Drivers, vehicles, and freight also have delete endpoints; records
 still referenced by route history cannot be deleted. Freight can be created
-manually in the Vue frontend; AI-assisted entry is intentionally deferred.
+manually in the Vue frontend or proposed through the AI operations assistant.
 
 Example create request:
 
@@ -185,3 +185,26 @@ freight contribution, not driver profit. Freight-level maintenance is an
 estimate allocated to completed routes by distance and then split equally among
 the route's freight. Route revenue is dated by departure; maintenance is dated
 by service date.
+
+## AI operations assistant
+
+The dispatch app includes a floating assistant backed by the local Ollama server.
+The backend defaults to `http://localhost:11434` and model `beam:cloud`; override
+these with `OLLAMA_BASE_URL` and `OLLAMA_MODEL`. Chat history is temporary in
+the open browser session. The assistant reads current drivers, vehicles and
+maintenance status, trailers, freight, routes, and the current month's finance
+analysis. Finance is read-only and is derived from freight revenue and recorded
+maintenance costs.
+
+The assistant can propose supported create, update, delete, route-status,
+delivery, and maintenance operations. It does not write until the user confirms
+the proposed operation. Backend validation and existing business rules still
+apply. For a new freight-and-route request, the assistant may propose both
+records together; if route planning fails after freight creation, it reports
+that the freight remains unassigned.
+
+`beam:cloud` is a cloud-backed Ollama model. Prompts and the operational
+snapshot supplied for each answer are sent to Ollama Cloud; do not use this
+configuration with sensitive data unless that sharing is approved. Select a
+fully local model by setting `OLLAMA_MODEL` to its local Ollama tag. Configure
+the backend's Ollama URL to the host reachable from the backend process.

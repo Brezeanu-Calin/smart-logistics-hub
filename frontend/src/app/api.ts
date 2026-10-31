@@ -104,6 +104,23 @@ export interface PushSubscriptionRequest {
   }
 }
 
+export interface AssistantAction {
+  type: string
+  summary: string
+  id: number | null
+  payload: Record<string, unknown>
+}
+
+export interface AssistantChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface AssistantConfig {
+  model: string
+  cloudModel: boolean
+}
+
 export interface Goods {
   id: number
   trackingCode: string
