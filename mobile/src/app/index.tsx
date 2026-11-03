@@ -4,6 +4,7 @@ import { router, useFocusEffect, useLocalSearchParams } from 'expo-router'
 import {
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   RefreshControl,
@@ -15,6 +16,7 @@ import {
 } from 'react-native'
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import RouteMap from '../components/RouteMap'
+import DatePickerField from '../components/DatePickerField'
 import {
   type AssistantAction,
   type AssistantMessage,
@@ -32,7 +34,8 @@ import {
   request,
 } from '../api'
 
-type Tab = 'Home' | 'Routes' | 'Freight' | 'Drivers' | 'Fleet' | 'Service' | 'Finance' | 'Assistant'
+type Tab = 'Home' | 'Routes' | 'Freight' | 'Drivers' | 'Fleet' | 'Service' | 'Finance'
+type SelectOption = { value: string; label: string; detail?: string }
 type FormKind = 'freight' | 'driver' | 'vehicle' | 'trailer' | 'route' | 'maintenance'
 type FormModal = {
   kind: FormKind
@@ -43,7 +46,7 @@ type FormModal = {
 }
 type ChatLine = AssistantMessage & { action?: AssistantAction }
 
-const TABS: Tab[] = ['Home', 'Routes', 'Freight', 'Drivers', 'Fleet', 'Service', 'Finance', 'Assistant']
+const TABS: Tab[] = ['Home', 'Routes', 'Freight', 'Drivers', 'Fleet', 'Service', 'Finance']
 const ACCENT = '#f59e0b'
 const NAVY = '#111416'
 const GOODS_TYPES: GoodsType[] = [
@@ -60,6 +63,12 @@ const TRAILER_TYPES = [
 
 const dateString = (value: string | null | undefined) =>
   value ? new Date(value).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—'
+const dateInputValue = (value: Date) => {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
 const money = (value: number | null | undefined) =>
   value == null ? 'Not recorded' : `€${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const displayStatus = (value: string) => value.replaceAll('_', ' ').toLowerCase()
@@ -89,8 +98,8 @@ function MobileApp() {
   const [routes, setRoutes] = useState<Route[]>([])
   const [simulationPositions, setSimulationPositions] = useState<Record<number, RouteSimulationPosition>>({})
   const [finance, setFinance] = useState<FinanceReport | null>(null)
-  const [fromDate, setFromDate] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10))
-  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [fromDate, setFromDate] = useState(() => dateInputValue(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
+  const [toDate, setToDate] = useState(() => dateInputValue(new Date()))
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -101,6 +110,7 @@ function MobileApp() {
   const [chatInput, setChatInput] = useState('')
   const [chatBusy, setChatBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState<AssistantAction | null>(null)
+  const [assistantOpen, setAssistantOpen] = useState(false)
 
   const setTab = (nextTab: Tab) => {
     router.setParams({ screen: nextTab.toLowerCase() })
@@ -247,18 +257,33 @@ function MobileApp() {
       case 'route': {
         const ids = (values.goodsIds ?? '').split(',').map((item) => Number(item.trim())).filter((item) => Number.isSafeInteger(item) && item > 0)
         if (!ids.length || ids.length > 12) {
-          setError('Enter between 1 and 12 unassigned freight IDs, separated by commas.')
+          setError('Select between 1 and 12 unassigned freight items.')
           return
         }
         if (ids.some((goodsId) => !goods.some((item) => item.id === goodsId && item.status === 'UNASSIGNED'))) {
-          setError('Every freight ID must belong to an unassigned freight item.')
+          setError('One or more selected freight items are no longer unassigned. Refresh and choose again.')
+          return
+        }
+        const driverId = number('driverId')
+        const vehicleId = number('vehicleId')
+        const trailerId = values.trailerId ? number('trailerId') : null
+        if (!drivers.some((item) => item.id === driverId && item.status === 'AVAILABLE')) {
+          setError('Select an available driver.')
+          return
+        }
+        if (!vehicles.some((item) => item.id === vehicleId && item.status === 'AVAILABLE')) {
+          setError('Select an available vehicle.')
+          return
+        }
+        if (trailerId !== null && !trailers.some((item) => item.id === trailerId && item.status === 'AVAILABLE')) {
+          setError('Select an available trailer or choose No trailer.')
           return
         }
         path = '/routes'
         payload = {
-          driverId: number('driverId'),
-          vehicleId: number('vehicleId'),
-          trailerId: values.trailerId ? number('trailerId') : null,
+          driverId,
+          vehicleId,
+          trailerId,
           departureTime: new Date(values.departureTime).toISOString(),
           stops: [
             ...ids.map((goodsId) => ({ goodsId, type: 'PICKUP' })),
@@ -559,8 +584,8 @@ function MobileApp() {
           <>
             <Card title="Reporting period" subtitle="Revenue less recorded maintenance costs. Other operating costs are excluded.">
               <View style={styles.dateFields}>
-                <Field label="From (YYYY-MM-DD)" value={fromDate} onChangeText={setFromDate} />
-                <Field label="To (YYYY-MM-DD)" value={toDate} onChangeText={setToDate} />
+                <DatePickerField label="From" value={fromDate} onChange={setFromDate} />
+                <DatePickerField label="To" value={toDate} onChange={setToDate} />
               </View>
               <Button label="Update report" onPress={() => void refresh()} />
             </Card>
@@ -584,27 +609,6 @@ function MobileApp() {
           </>
         )}
 
-        {tab === 'Assistant' && (
-          <>
-            <Card title="AI operations assistant" subtitle="Proposals require your confirmation before changes are sent to the backend.">
-              <Text style={styles.warningText}>Assistant prompts and the operational snapshot are sent to the backend&apos;s configured Ollama service.</Text>
-            </Card>
-            <View style={styles.chatList}>
-              {!chat.length && <Empty>Ask about routes, freight, drivers, vehicles, or maintenance.</Empty>}
-              {chat.map((message, index) => (
-                <View key={`${message.role}-${index}`} style={[styles.chatBubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
-                  <Text style={styles.bodyText}>{message.content}</Text>
-                  {message.action ? <View style={styles.actionProposal}><Text style={styles.proposalTitle}>{message.action.summary}</Text><Button label="Confirm proposed change" disabled={chatBusy} onPress={() => void confirmAssistantAction()} /></View> : null}
-                </View>
-              ))}
-            </View>
-            {pendingAction ? <Button label="Confirm latest proposal" disabled={chatBusy} onPress={() => void confirmAssistantAction()} /> : null}
-            <View style={styles.chatComposer}>
-              <TextInput value={chatInput} onChangeText={setChatInput} placeholder="Ask the operations assistant…" style={styles.chatInput} multiline />
-              <Button label={chatBusy ? '…' : 'Send'} disabled={chatBusy || !chatInput.trim()} onPress={() => void sendAssistantMessage()} />
-            </View>
-          </>
-        )}
       </ScrollView>
 
       <View style={styles.tabBar}>
@@ -618,6 +622,49 @@ function MobileApp() {
           ))}
         </ScrollView>
       </View>
+
+      <Pressable
+        onPress={() => setAssistantOpen(true)}
+        style={styles.assistantFab}
+        accessibilityLabel="Open operations assistant"
+        accessibilityRole="button"
+      >
+        <Text style={styles.assistantFabText}>AI</Text>
+      </Pressable>
+
+      <Modal visible={assistantOpen} transparent animationType="slide" onRequestClose={() => setAssistantOpen(false)}>
+        <View style={styles.assistantScrim}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={() => setAssistantOpen(false)} accessibilityLabel="Close assistant" />
+          <KeyboardAvoidingView style={styles.assistantKeyboard} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <View style={styles.assistantPanel}>
+              <View style={styles.assistantHeader}>
+                <View style={styles.flex}>
+                  <Text style={styles.cardTitle}>AI operations assistant</Text>
+                  <Text style={styles.mutedText}>Changes require your confirmation.</Text>
+                </View>
+                <Pressable onPress={() => setAssistantOpen(false)} accessibilityLabel="Close assistant">
+                  <Text style={styles.closeText}>×</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.warningText}>Prompts and operational data are sent to the backend&apos;s configured Ollama service.</Text>
+              <ScrollView style={styles.assistantMessages} contentContainerStyle={styles.chatList} keyboardShouldPersistTaps="handled">
+                {!chat.length && <Empty>Ask about routes, freight, drivers, vehicles, or maintenance.</Empty>}
+                {chat.map((message, index) => (
+                  <View key={`${message.role}-${index}`} style={[styles.chatBubble, message.role === 'user' ? styles.userBubble : styles.assistantBubble]}>
+                    <Text style={styles.bodyText}>{message.content}</Text>
+                    {message.action ? <View style={styles.actionProposal}><Text style={styles.proposalTitle}>{message.action.summary}</Text><Button label="Confirm proposed change" disabled={chatBusy} onPress={() => void confirmAssistantAction()} /></View> : null}
+                  </View>
+                ))}
+              </ScrollView>
+              {pendingAction ? <Button label="Confirm latest proposal" disabled={chatBusy} onPress={() => void confirmAssistantAction()} /> : null}
+              <View style={styles.chatComposer}>
+                <TextInput value={chatInput} onChangeText={setChatInput} placeholder="Ask the operations assistant…" placeholderTextColor="#6b7280" style={styles.chatInput} multiline />
+                <Button label={chatBusy ? '…' : 'Send'} disabled={chatBusy || !chatInput.trim()} onPress={() => void sendAssistantMessage()} />
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
       {modal ? (
         <FormEditor modal={modal} busy={busy} error={error} onChange={updateField} onClose={() => setModal(null)} onSave={() => void saveForm()} drivers={drivers} vehicles={vehicles} trailers={trailers} goods={goods} />
@@ -677,6 +724,63 @@ function SearchInput({ value, onChangeText, placeholder }: { value: string; onCh
 
 function Field({ label, value, onChangeText, keyboardType }: { label: string; value: string; onChangeText: (value: string) => void; keyboardType?: 'default' | 'email-address' | 'numeric' | 'decimal-pad' }) {
   return <View style={styles.field}><Text style={styles.fieldLabel}>{label}</Text><TextInput value={value} onChangeText={onChangeText} style={styles.fieldInput} keyboardType={keyboardType ?? 'default'} autoCapitalize={keyboardType === 'email-address' ? 'none' : 'sentences'} /></View>
+}
+
+function ChoiceField({
+  label,
+  options,
+  selectedValues,
+  onChange,
+  multiple = false,
+  maxSelections,
+  emptyLabel,
+}: {
+  label: string
+  options: SelectOption[]
+  selectedValues: string[]
+  onChange: (selected: string[]) => void
+  multiple?: boolean
+  maxSelections?: number
+  emptyLabel?: string
+}) {
+  function toggle(value: string) {
+    if (!multiple) {
+      onChange([value])
+      return
+    }
+    if (selectedValues.includes(value)) {
+      onChange(selectedValues.filter((item) => item !== value))
+      return
+    }
+    if (maxSelections !== undefined && selectedValues.length >= maxSelections) return
+    onChange([...selectedValues, value])
+  }
+
+  return (
+    <View style={styles.choiceField}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      {options.map((option) => {
+        const selected = selectedValues.includes(option.value)
+        return (
+          <Pressable
+            key={option.value || 'no-trailer'}
+            onPress={() => toggle(option.value)}
+            style={[styles.resourceChoice, selected && styles.resourceChoiceSelected]}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: selected }}
+          >
+            <View style={styles.resourceChoiceCopy}>
+              <Text style={[styles.resourceChoiceLabel, selected && styles.resourceChoiceLabelSelected]}>{option.label}</Text>
+              {option.detail ? <Text style={styles.resourceChoiceDetail}>{option.detail}</Text> : null}
+            </View>
+            <Text style={[styles.resourceChoiceCheck, selected && styles.resourceChoiceCheckSelected]}>{selected ? '✓' : '+'}</Text>
+          </Pressable>
+        )
+      })}
+      {!options.length && emptyLabel ? <Text style={styles.emptyText}>{emptyLabel}</Text> : null}
+      {multiple ? <Text style={styles.mutedText}>{selectedValues.length} selected</Text> : null}
+    </View>
+  )
 }
 
 function DataRow({ label, value }: { label: string; value: string }) {
@@ -752,13 +856,7 @@ function FormEditor({ modal, busy, error, onChange, onClose, onSave, drivers, ve
       { key: 'make', label: 'Make' }, { key: 'model', label: 'Model' }, { key: 'year', label: 'Year', keyboard: 'numeric' },
       { key: 'maxWeightCapacityKg', label: 'Max weight capacity (kg)', keyboard: 'decimal-pad' }, { key: 'maxVolumeM3', label: 'Max volume (m³)', keyboard: 'decimal-pad' },
     ],
-    route: [
-      { key: 'driverId', label: `Driver ID (${drivers.filter((item) => item.status === 'AVAILABLE').map((item) => `${item.id} ${item.name}`).join('; ') || 'none available'})`, keyboard: 'numeric' },
-      { key: 'vehicleId', label: `Vehicle ID (${vehicles.filter((item) => item.status === 'AVAILABLE').map((item) => `${item.id} ${item.licensePlate}`).join('; ') || 'none available'})`, keyboard: 'numeric' },
-      { key: 'trailerId', label: `Trailer ID, if required (${trailers.filter((item) => item.status === 'AVAILABLE').map((item) => `${item.id} ${item.licensePlate}`).join('; ') || 'none'})`, keyboard: 'numeric' },
-      { key: 'departureTime', label: 'Departure date/time (ISO 8601)' },
-      { key: 'goodsIds', label: `Unassigned freight IDs, comma separated (${goods.filter((item) => item.status === 'UNASSIGNED').map((item) => `${item.id} ${item.trackingCode}`).join('; ') || 'none'})` },
-    ],
+    route: [{ key: 'departureTime', label: 'Departure date/time (ISO 8601)' }],
     maintenance: [
       { key: 'performedAt', label: 'Service date/time (ISO 8601)' },
       { key: 'odometerKm', label: 'Odometer (km)', keyboard: 'numeric' },
@@ -768,6 +866,18 @@ function FormEditor({ modal, busy, error, onChange, onClose, onSave, drivers, ve
   const title = modal.kind === 'maintenance'
     ? `Record ${modal.component?.label ?? 'service'} · ${modal.vehicle?.licensePlate ?? ''}`
     : `${modal.editingId === undefined ? 'Add' : 'Edit'} ${modal.kind}`
+  const availableDrivers = drivers
+    .filter((driver) => driver.status === 'AVAILABLE')
+    .map((driver) => ({ value: String(driver.id), label: driver.name, detail: `${driver.email} · ${driver.licenseCategories.join(', ') || 'No license categories'}` }))
+  const availableVehicles = vehicles
+    .filter((vehicle) => vehicle.status === 'AVAILABLE')
+    .map((vehicle) => ({ value: String(vehicle.id), label: vehicle.licensePlate, detail: `${vehicle.make} ${vehicle.model} · ${displayStatus(vehicle.vehicleType)}` }))
+  const availableTrailers = trailers
+    .filter((trailer) => trailer.status === 'AVAILABLE')
+    .map((trailer) => ({ value: String(trailer.id), label: trailer.licensePlate, detail: `${trailer.make} ${trailer.model} · ${displayStatus(trailer.trailerType)}` }))
+  const unassignedFreight = goods
+    .filter((item) => item.status === 'UNASSIGNED')
+    .map((item) => ({ value: String(item.id), label: `${item.trackingCode} · ${item.clientName}`, detail: `${item.pickupCity} → ${item.deliveryCity} · ${displayStatus(item.goodsType)}` }))
 
   return (
     <View style={styles.modalScrim}>
@@ -776,6 +886,39 @@ function FormEditor({ modal, busy, error, onChange, onClose, onSave, drivers, ve
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.modalContent}>
           {modal.kind === 'route' ? <Text style={styles.warningText}>The server calculates road distance and arrival time. Pickups are ordered before deliveries; the backend validates vehicle, driver, cargo, and trailer compatibility.</Text> : null}
           {modal.kind === 'maintenance' ? <Text style={styles.warningText}>Odometer must not exceed the vehicle&apos;s current mileage. Use an ISO date/time such as 2026-10-01T08:00:00Z.</Text> : null}
+          {modal.kind === 'route' ? (
+            <>
+              <ChoiceField
+                label="Driver"
+                options={availableDrivers}
+                selectedValues={modal.values.driverId ? [modal.values.driverId] : []}
+                onChange={(selected) => onChange('driverId', selected[0] ?? '')}
+                emptyLabel="No available drivers."
+              />
+              <ChoiceField
+                label="Vehicle"
+                options={availableVehicles}
+                selectedValues={modal.values.vehicleId ? [modal.values.vehicleId] : []}
+                onChange={(selected) => onChange('vehicleId', selected[0] ?? '')}
+                emptyLabel="No available vehicles."
+              />
+              <ChoiceField
+                label="Trailer (optional)"
+                options={[{ value: '', label: 'No trailer', detail: 'Continue without a trailer' }, ...availableTrailers]}
+                selectedValues={[modal.values.trailerId ?? '']}
+                onChange={(selected) => onChange('trailerId', selected[0] ?? '')}
+              />
+              <ChoiceField
+                label="Freight (select 1–12)"
+                options={unassignedFreight}
+                selectedValues={(modal.values.goodsIds ?? '').split(',').filter(Boolean)}
+                onChange={(selected) => onChange('goodsIds', selected.join(','))}
+                multiple
+                maxSelections={12}
+                emptyLabel="No unassigned freight available."
+              />
+            </>
+          ) : null}
           {fields[modal.kind].map((field) => (
             <View key={field.key}>
               {field.options ? (
@@ -870,11 +1013,22 @@ const styles = StyleSheet.create({
   tabText: { color: '#9ca3af', fontSize: 9, fontWeight: '600', fontFamily: 'monospace', textTransform: 'uppercase' },
   selectedTabText: { color: ACCENT },
   tabCount: { color: '#0d0f11', backgroundColor: ACCENT, fontSize: 8, fontWeight: '700', overflow: 'hidden', paddingHorizontal: 4, fontFamily: 'monospace' },
+  assistantFab: { position: 'absolute', right: 16, bottom: 72, width: 52, height: 52, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#fbbf24', backgroundColor: ACCENT, elevation: 8, shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8, shadowOffset: { width: 0, height: 3 } },
+  assistantFabText: { color: '#0d0f11', fontFamily: 'monospace', fontSize: 13, fontWeight: '800' },
   modalScrim: { ...StyleSheet.absoluteFill, zIndex: 5, backgroundColor: 'rgba(0, 0, 0, .72)', justifyContent: 'flex-end' },
   modalFrame: { maxHeight: '90%', backgroundColor: '#161a1d', borderTopWidth: 1, borderColor: '#2d333b', paddingBottom: Platform.OS === 'ios' ? 26 : 10 },
   modalHeader: { minHeight: 54, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 17, backgroundColor: '#111416', borderBottomWidth: 1, borderColor: '#2d333b' },
   closeText: { color: '#9ca3af', fontSize: 26, paddingHorizontal: 5 },
   modalContent: { gap: 10, padding: 15, paddingBottom: 24 },
+  choiceField: { gap: 6 },
+  resourceChoice: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: '#374151', paddingHorizontal: 10, paddingVertical: 7, backgroundColor: '#111416' },
+  resourceChoiceSelected: { borderColor: ACCENT, backgroundColor: '#241d10' },
+  resourceChoiceCopy: { flex: 1, gap: 3 },
+  resourceChoiceLabel: { color: '#f3f4f6', fontSize: 11, fontWeight: '600' },
+  resourceChoiceLabelSelected: { color: ACCENT },
+  resourceChoiceDetail: { color: '#9ca3af', fontSize: 9 },
+  resourceChoiceCheck: { color: '#6b7280', fontFamily: 'monospace', fontSize: 14, fontWeight: '700' },
+  resourceChoiceCheckSelected: { color: ACCENT },
   choiceRow: { flexDirection: 'row', gap: 6, paddingVertical: 2 },
   choice: { borderWidth: 1, borderColor: '#374151', backgroundColor: '#111416', paddingHorizontal: 9, paddingVertical: 8 },
   selectedChoice: { borderColor: ACCENT, backgroundColor: '#241d10' },
@@ -886,6 +1040,11 @@ const styles = StyleSheet.create({
   chatBubble: { padding: 12, maxWidth: '94%' },
   userBubble: { alignSelf: 'flex-end', backgroundColor: '#241d10', borderWidth: 1, borderColor: '#574116' },
   assistantBubble: { alignSelf: 'flex-start', backgroundColor: '#161a1d', borderWidth: 1, borderColor: '#2d333b' },
+  assistantScrim: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0, 0, 0, .72)' },
+  assistantKeyboard: { flex: 1, justifyContent: 'flex-end' },
+  assistantPanel: { height: '82%', maxHeight: 700, minHeight: 360, gap: 12, borderWidth: 1, borderColor: '#2d333b', padding: 14, backgroundColor: '#161a1d' },
+  assistantHeader: { minHeight: 42, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#2d333b', paddingBottom: 8 },
+  assistantMessages: { flex: 1 },
   actionProposal: { marginTop: 9, gap: 8 },
   proposalTitle: { color: ACCENT, fontSize: 11, fontWeight: '700' },
   chatComposer: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
