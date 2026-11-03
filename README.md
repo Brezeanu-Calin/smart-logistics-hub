@@ -37,7 +37,7 @@ The Vue app uses `VITE_API_BASE_URL` when set and otherwise calls
 `http://localhost:8080/api`. The backend exposes `/api/config` so the frontend
 uses the same configured warehouse/depot location as route planning.
 
-## Mobile dispatch app
+## Mobile web app (PWA)
 
 The Vue frontend is also an installable, mobile-first PWA. Serve it over HTTPS
 (or localhost during development), then use the browser's install option on
@@ -64,6 +64,41 @@ When the frontend and backend use different origins, set
 screen app and a supported iOS version; push is subject to browser and OS
 permission settings. Route and fleet data still require a network connection,
 and simulated route positions are not live GPS tracking.
+
+## Native mobile app (Expo / Android and iOS)
+
+The separate React Native app is in `mobile`. Start the backend and SQL Server
+as described above, then open a PowerShell terminal:
+
+```powershell
+cd D:\smart-logistics-hub\mobile
+npm install
+npx expo start --lan
+```
+
+The app automatically uses the Expo development server's host address to reach
+the backend from a physical device. Open Expo Go on your phone and scan the QR
+code; the phone and computer must be on the same network, and the computer
+firewall must allow connections to port 8080. If automatic detection does not
+work, set `EXPO_PUBLIC_API_BASE_URL` to your computer's LAN IPv4 address (find
+it with `ipconfig`) before starting Expo:
+
+```powershell
+$env:EXPO_PUBLIC_API_BASE_URL = "http://192.168.1.25:8080/api"
+npx expo start --lan
+```
+
+Replace `192.168.1.25` with your computer's address. For an Android emulator,
+the automatic fallback is `http://10.0.2.2:8080/api`; for the iOS simulator, it
+is `http://localhost:8080/api`. The API URL is bundled into the development app,
+so restart Expo after changing it.
+
+The native app includes the operations dashboard, route planning and lifecycle
+with road maps and simulated positions, freight, drivers, vehicles and trailers,
+maintenance records, finance reports, and the assistant's confirm-before-write
+operations. It talks directly to the same backend and currently has no real
+authentication. Backend Web Push subscriptions are supported by the PWA; native
+Expo push registration is not yet connected.
 
 ## Route lifecycle
 
