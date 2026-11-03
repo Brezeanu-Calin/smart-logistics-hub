@@ -15,7 +15,7 @@ export default function RouteMap({
   return (
     <MapView
       ref={mapRef}
-      style={{ height: 210, width: '100%', borderRadius: 8 }}
+      style={{ height: 210, width: '100%' }}
       initialRegion={{ latitude: first.latitude, longitude: first.longitude, latitudeDelta: 5, longitudeDelta: 5 }}
       onMapReady={() => {
         if (coordinates.length > 1) {
@@ -28,9 +28,9 @@ export default function RouteMap({
       scrollEnabled={false}
       zoomEnabled={false}
     >
-      <Polyline coordinates={coordinates} strokeColor="#635bdb" strokeWidth={4} />
+      <Polyline coordinates={coordinates} strokeColor="#f59e0b" strokeWidth={4} />
       <Marker coordinate={first} title="Route start" />
-      {coordinates.length > 1 ? <Marker coordinate={coordinates[coordinates.length - 1]!} title="Route destination" pinColor="#d28b2b" /> : null}
+      {coordinates.length > 1 ? <Marker coordinate={coordinates[coordinates.length - 1]!} title="Route destination" pinColor="#10b981" /> : null}
       {position ? <Marker coordinate={position} title={`Simulated position · ${Math.round(position.progress * 100)}%`} pinColor="#1ca376" /> : null}
     </MapView>
   )

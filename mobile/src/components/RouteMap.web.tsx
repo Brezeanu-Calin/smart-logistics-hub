@@ -25,9 +25,9 @@ export default function RouteMap({
   })
   const points = coordinates.map(pointOnMap)
   const markers = [
-    { point: points[0]!, color: '#635bdb' },
-    ...(points.length > 1 ? [{ point: points[points.length - 1]!, color: '#d28b2b' }] : []),
-    ...(position ? [{ point: pointOnMap(position), color: '#1ca376' }] : []),
+    { point: points[0]!, color: '#f59e0b' },
+    ...(points.length > 1 ? [{ point: points[points.length - 1]!, color: '#10b981' }] : []),
+    ...(position ? [{ point: pointOnMap(position), color: '#38bdf8' }] : []),
   ]
 
   return (
@@ -75,7 +75,7 @@ const styles = StyleSheet.create({
     width: '100%',
     borderRadius: 8,
     overflow: 'hidden',
-    backgroundColor: '#eef2f5',
+    backgroundColor: '#0b0e10',
     position: 'relative',
   },
   road: {
@@ -83,15 +83,15 @@ const styles = StyleSheet.create({
     left: '-10%',
     width: '120%',
     height: 8,
-    backgroundColor: '#fff',
+    backgroundColor: '#293137',
     borderTopWidth: 1,
     borderBottomWidth: 1,
-    borderColor: '#e1e6eb',
+    borderColor: '#374151',
   },
   routeLine: {
     position: 'absolute',
     height: 4,
-    backgroundColor: '#635bdb',
+    backgroundColor: '#f59e0b',
     transformOrigin: 'left center',
   },
   marker: {
@@ -100,6 +100,6 @@ const styles = StyleSheet.create({
     height: 12,
     borderRadius: 6,
     borderWidth: 2,
-    borderColor: '#fff',
+    borderColor: '#0d0f11',
   },
 })
