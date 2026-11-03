@@ -141,7 +141,7 @@ export interface GoodsRequest {
   goodsType: Goods['goodsType']
   description: string | null
   weightKg: number
-  revenueEur: number
+  revenueEur: number | null
   volumeM3: number
   pickupCity: string
   deliveryCity: string

@@ -11,6 +11,10 @@ import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 
 import java.util.List;
 import java.util.Locale;
@@ -18,6 +22,7 @@ import java.time.OffsetDateTime;
 
 @Service
 @Transactional
+@Validated
 public class DriverService {
     private final DriverRepository driverRepository;
     private final RouteRepository routeRepository;
@@ -35,18 +40,18 @@ public class DriverService {
     }
 
     @Transactional(readOnly = true)
-    public DriverResponse findById(Long id) {
+    public DriverResponse findById(@Positive Long id) {
         return toResponse(findDriver(id));
     }
 
-    public DriverResponse create(DriverRequest request) {
+    public DriverResponse create(@Valid DriverRequest request) {
         String email = normalizeEmail(request.email());
         ensureEmailAvailable(email, null);
         Driver driver = new Driver(request.name().trim(), email, request.licenseCategories());
         return save(driver, email);
     }
 
-    public DriverResponse update(Long id, DriverRequest request) {
+    public DriverResponse update(@Positive Long id, @Valid DriverRequest request) {
         Driver driver = lockDriver(id);
         ensureNotScheduled(driver);
         String email = normalizeEmail(request.email());
@@ -55,7 +60,7 @@ public class DriverService {
         return save(driver, email);
     }
 
-    public DriverResponse updateDispatcherManagedStatus(Long id, DriverStatus status) {
+    public DriverResponse updateDispatcherManagedStatus(@Positive Long id, @NotNull DriverStatus status) {
         Driver driver = lockDriver(id);
         if (driver.getStatus() == DriverStatus.IN_TRANSIT || driver.getStatus() == DriverStatus.RETURNING) {
             throw new InvalidDriverStatusException(
@@ -71,8 +76,8 @@ public class DriverService {
         return toResponse(driverRepository.save(driver));
     }
 
-    public void delete(Long id) {
-        Driver driver = findDriver(id);
+    public void delete(@Positive Long id) {
+        Driver driver = lockDriver(id);
         driverRepository.delete(driver);
         try {
             driverRepository.flush();

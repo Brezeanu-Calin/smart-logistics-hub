@@ -5,7 +5,9 @@ import ro.logistics.smart_logistics.goods.dto.GoodsDTO;
 import ro.logistics.smart_logistics.goods.dto.GoodsResponse;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -21,6 +23,7 @@ import java.net.URI;
 import java.util.List;
 
 @RestController
+@Validated
 @RequestMapping("/api/goods")
 public class GoodsController {
     private final GoodsService goodsService;
@@ -40,7 +43,7 @@ public class GoodsController {
     }
 
     @GetMapping("/{id}")
-    public GoodsResponse findById(@PathVariable Long id) {
+    public GoodsResponse findById(@PathVariable @Positive Long id) {
         return goodsService.findById(id);
     }
 
@@ -50,17 +53,17 @@ public class GoodsController {
     }
 
     @PostMapping("/{id}/duplicate")
-    public ResponseEntity<GoodsResponse> duplicate(@PathVariable Long id) {
+    public ResponseEntity<GoodsResponse> duplicate(@PathVariable @Positive Long id) {
         return created(goodsService.duplicateGoods(id));
     }
 
     @PutMapping("/{id}")
-    public GoodsResponse update(@PathVariable Long id, @Valid @RequestBody GoodsDTO dto) {
+    public GoodsResponse update(@PathVariable @Positive Long id, @Valid @RequestBody GoodsDTO dto) {
         return goodsService.updateGoods(id, dto);
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
+    public ResponseEntity<Void> delete(@PathVariable @Positive Long id) {
         goodsService.delete(id);
         return ResponseEntity.noContent().build();
     }

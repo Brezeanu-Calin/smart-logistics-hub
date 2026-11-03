@@ -7,7 +7,9 @@ import ro.logistics.smart_logistics.vehicle.dto.VehicleStatusRequest;
 import ro.logistics.smart_logistics.maintenance.dto.VehicleMaintenanceOperationRequest;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -23,6 +25,7 @@ import java.net.URI;
 import java.util.List;
 
 @RestController
+@Validated
 @RequestMapping("/api/vehicles")
 public class VehicleController {
     private final VehicleService vehicleService;
@@ -37,7 +40,7 @@ public class VehicleController {
     }
 
     @GetMapping("/{id}")
-    public VehicleResponse findById(@PathVariable Long id) {
+    public VehicleResponse findById(@PathVariable @Positive Long id) {
         return vehicleService.findById(id);
     }
 
@@ -52,13 +55,16 @@ public class VehicleController {
     }
 
     @PutMapping("/{id}")
-    public VehicleResponse update(@PathVariable Long id, @Valid @RequestBody VehicleRequest request) {
+    public VehicleResponse update(
+            @PathVariable @Positive Long id,
+            @Valid @RequestBody VehicleRequest request
+    ) {
         return vehicleService.update(id, request);
     }
 
     @PatchMapping("/{id}/status")
     public VehicleResponse updateStatus(
-            @PathVariable Long id,
+            @PathVariable @Positive Long id,
             @Valid @RequestBody VehicleStatusRequest request
     ) {
         return vehicleService.updateDispatcherManagedStatus(id, request.status());
@@ -66,14 +72,14 @@ public class VehicleController {
 
     @PostMapping("/{id}/maintenance")
     public VehicleResponse recordMaintenanceOperation(
-            @PathVariable Long id,
+            @PathVariable @Positive Long id,
             @Valid @RequestBody VehicleMaintenanceOperationRequest request
     ) {
         return vehicleService.recordMaintenanceOperation(id, request);
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
+    public ResponseEntity<Void> delete(@PathVariable @Positive Long id) {
         vehicleService.delete(id);
         return ResponseEntity.noContent().build();
     }

@@ -15,6 +15,10 @@ import ro.logistics.smart_logistics.maintenance.dto.VehicleMaintenanceOperationR
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 
 import java.util.List;
 import java.util.Locale;
@@ -22,6 +26,7 @@ import java.time.OffsetDateTime;
 
 @Service
 @Transactional
+@Validated
 public class VehicleService {
     private final VehicleRepository vehicleRepository;
     private final RouteRepository routeRepository;
@@ -46,13 +51,13 @@ public class VehicleService {
                 .toList();
     }
 
-    public VehicleResponse findById(Long id) {
+    public VehicleResponse findById(@Positive Long id) {
         Vehicle vehicle = lockVehicle(id);
         maintenanceService.updateAutomaticMaintenanceState(vehicle, OffsetDateTime.now());
         return toResponse(vehicle);
     }
 
-    public VehicleResponse create(VehicleRequest request) {
+    public VehicleResponse create(@Valid VehicleRequest request) {
         validateTransmission(request.vehicleType(), request.transmissionType());
         String licensePlate = normalizeLicensePlate(request.licensePlate());
         ensureLicensePlateAvailable(licensePlate, null);
@@ -72,7 +77,7 @@ public class VehicleService {
         return toResponse(vehicleRepository.saveAndFlush(saved));
     }
 
-    public VehicleResponse update(Long id, VehicleRequest request) {
+    public VehicleResponse update(@Positive Long id, @Valid VehicleRequest request) {
         Vehicle vehicle = lockVehicle(id);
         ensureNotScheduled(vehicle);
         validateTransmission(request.vehicleType(), request.transmissionType());
@@ -97,7 +102,7 @@ public class VehicleService {
         return toResponse(vehicleRepository.saveAndFlush(saved));
     }
 
-    public VehicleResponse updateDispatcherManagedStatus(Long id, VehicleStatus status) {
+    public VehicleResponse updateDispatcherManagedStatus(@Positive Long id, @NotNull VehicleStatus status) {
         Vehicle vehicle = lockVehicle(id);
         if (vehicle.getStatus() == VehicleStatus.IN_TRANSIT) {
             throw new InvalidVehicleStatusException(
@@ -119,15 +124,15 @@ public class VehicleService {
     }
 
     public VehicleResponse recordMaintenanceOperation(
-            Long id,
-            VehicleMaintenanceOperationRequest request
+            @Positive Long id,
+            @Valid VehicleMaintenanceOperationRequest request
     ) {
         Vehicle vehicle = maintenanceService.recordOperation(id, request);
         return toResponse(vehicle);
     }
 
-    public void delete(Long id) {
-        Vehicle vehicle = findVehicle(id);
+    public void delete(@Positive Long id) {
+        Vehicle vehicle = lockVehicle(id);
         vehicleRepository.delete(vehicle);
         try {
             vehicleRepository.flush();
@@ -161,10 +166,6 @@ public class VehicleService {
                 vehicle.getId(), List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), OffsetDateTime.now())) {
             throw new VehicleScheduledException(vehicle.getId());
         }
-    }
-
-    private Vehicle findVehicle(Long id) {
-        return vehicleRepository.findById(id).orElseThrow(() -> new VehicleNotFoundException(id));
     }
 
     private Vehicle lockVehicle(Long id) {

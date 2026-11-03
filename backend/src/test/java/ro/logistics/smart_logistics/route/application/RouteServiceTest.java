@@ -82,17 +82,18 @@ class RouteServiceTest {
         Goods goods = goods(3L, 4000.0, 10.0);
         prepareBasicCreate(driver, vehicle, goods);
 
-        var response = routeService.create(request(1L, 2L, 3L));
+        RouteCreateRequest createRequest = request(1L, 2L, 3L);
+        var response = routeService.create(createRequest);
 
         assertEquals(RouteStatus.PLANNED, response.status());
         assertEquals(2, response.stops().size());
         assertEquals(2, response.geometry().size());
         assertEquals(
-                OffsetDateTime.parse("2026-10-15T14:00:00Z"),
+                createRequest.departureTime().plusHours(6),
                 response.estimatedArrivalTime()
         );
         assertEquals(
-                OffsetDateTime.parse("2026-10-15T15:00:00Z"),
+                createRequest.departureTime().plusHours(7),
                 response.estimatedReturnTime()
         );
         assertEquals(GoodsStatus.ASSIGNED, goods.getStatus());
@@ -194,7 +195,7 @@ class RouteServiceTest {
         RouteCreateRequest request = new RouteCreateRequest(
                 1L,
                 2L,
-                OffsetDateTime.parse("2026-10-15T08:00:00Z"),
+                OffsetDateTime.now().plusDays(1),
                 List.of(
                         new RouteStopRequest(3L, RouteStopType.DELIVERY),
                         new RouteStopRequest(3L, RouteStopType.PICKUP)
@@ -204,6 +205,40 @@ class RouteServiceTest {
         assertThrows(InvalidRouteException.class, () -> routeService.create(request));
 
         verify(driverRepository, never()).findByIdForUpdate(any());
+    }
+
+    @Test
+    void rejectsPastDepartureBeforeCallingRoutingService() {
+        RouteCreateRequest request = new RouteCreateRequest(
+                1L,
+                2L,
+                OffsetDateTime.now().minusMinutes(1),
+                List.of(
+                        new RouteStopRequest(3L, RouteStopType.PICKUP),
+                        new RouteStopRequest(3L, RouteStopType.DELIVERY)
+                )
+        );
+
+        assertThrows(InvalidRouteException.class, () -> routeService.create(request));
+        verify(directionsService, never()).estimate(anyList());
+    }
+
+    @Test
+    void rejectsRoutesWithMoreThanTwelveGoodsBeforeAccessingRepositories() {
+        List<RouteStopRequest> stops = new java.util.ArrayList<>();
+        for (long goodsId = 1; goodsId <= 13; goodsId++) {
+            stops.add(new RouteStopRequest(goodsId, RouteStopType.PICKUP));
+            stops.add(new RouteStopRequest(goodsId, RouteStopType.DELIVERY));
+        }
+        RouteCreateRequest request = new RouteCreateRequest(
+                1L,
+                2L,
+                OffsetDateTime.now().plusDays(1),
+                stops
+        );
+
+        assertThrows(InvalidRouteException.class, () -> routeService.create(request));
+        verify(directionsService, never()).estimate(anyList());
     }
 
     @Test
@@ -479,7 +514,7 @@ class RouteServiceTest {
         return new RouteCreateRequest(
                 driverId,
                 vehicleId,
-                OffsetDateTime.parse("2026-10-15T08:00:00Z"),
+                OffsetDateTime.now().plusDays(1),
                 List.of(
                         new RouteStopRequest(goodsId, RouteStopType.PICKUP),
                         new RouteStopRequest(goodsId, RouteStopType.DELIVERY)

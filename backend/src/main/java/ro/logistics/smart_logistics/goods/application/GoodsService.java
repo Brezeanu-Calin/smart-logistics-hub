@@ -10,6 +10,9 @@ import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 
 import java.time.Year;
 import java.util.List;
@@ -18,6 +21,7 @@ import java.util.concurrent.ThreadLocalRandom;
 
 @Service
 @Transactional
+@Validated
 public class GoodsService {
     private static final int TRACKING_CODE_ATTEMPTS = 100;
 
@@ -44,11 +48,11 @@ public class GoodsService {
     }
 
     @Transactional(readOnly = true)
-    public GoodsResponse findById(Long id) {
+    public GoodsResponse findById(@Positive Long id) {
         return toResponse(findGoods(id));
     }
 
-    public GoodsResponse saveGoods(GoodsDTO dto) {
+    public GoodsResponse saveGoods(@Valid GoodsDTO dto) {
         validate(dto);
         Goods goods = new Goods(
                 generateTrackingCode(),
@@ -64,7 +68,7 @@ public class GoodsService {
         return save(goods);
     }
 
-    public GoodsResponse updateGoods(Long id, GoodsDTO dto) {
+    public GoodsResponse updateGoods(@Positive Long id, @Valid GoodsDTO dto) {
         validate(dto);
         Goods goods = lockGoods(id);
         ensureEditable(goods);
@@ -81,7 +85,7 @@ public class GoodsService {
         return save(goods);
     }
 
-    public GoodsResponse duplicateGoods(Long id) {
+    public GoodsResponse duplicateGoods(@Positive Long id) {
         Goods source = findGoods(id);
         return saveGoods(new GoodsDTO(
                 source.getClientName(),
@@ -95,7 +99,7 @@ public class GoodsService {
         ));
     }
 
-    public void delete(Long id) {
+    public void delete(@Positive Long id) {
         Goods goods = lockGoods(id);
         ensureEditable(goods);
         if (routeRepository.existsByStops_Goods_Id(id)) {

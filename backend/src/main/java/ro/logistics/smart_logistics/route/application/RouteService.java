@@ -33,8 +33,11 @@ import ro.logistics.smart_logistics.maintenance.application.VehicleMaintenanceSe
 
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -50,7 +53,9 @@ import java.util.stream.Collectors;
 
 @Service
 @Transactional
+@Validated
 public class RouteService {
+    private static final int MAX_GOODS_PER_ROUTE = 12;
     private static final List<RouteStatus> SCHEDULED_STATUSES = List.of(RouteStatus.PLANNED, RouteStatus.ACTIVE);
 
     private final RouteRepository routeRepository;
@@ -98,11 +103,11 @@ public class RouteService {
     }
 
     @Transactional(readOnly = true)
-    public RouteResponse findById(Long id) {
+    public RouteResponse findById(@Positive Long id) {
         return toResponse(findRoute(id));
     }
 
-    public RouteResponse recalculateDirections(Long id) {
+    public RouteResponse recalculateDirections(@Positive Long id) {
         Route route = findRouteForUpdate(id);
         List<String> cities = route.getStops().stream()
                 .sorted(Comparator.comparing(RouteStop::getStopOrder))
@@ -119,7 +124,10 @@ public class RouteService {
         return toResponse(routeRepository.saveAndFlush(route));
     }
 
-    public RouteResponse create(RouteCreateRequest request) {
+    public RouteResponse create(@Valid RouteCreateRequest request) {
+        if (request == null) {
+            throw new InvalidRouteException("Route details are required.");
+        }
         validateDepartureTime(request.departureTime());
         Set<Long> goodsIds = validateStops(request.stops());
         List<Long> sortedGoodsIds = goodsIds.stream().sorted().toList();
@@ -225,7 +233,7 @@ public class RouteService {
         return toResponse(routeRepository.saveAndFlush(route));
     }
 
-    public RouteResponse updateStatus(Long id, RouteStatusRequest request) {
+    public RouteResponse updateStatus(@Positive Long id, @Valid RouteStatusRequest request) {
         Route route = findRouteForMutation(id);
         RouteStatus requestedStatus = request.status();
         if (requestedStatus == RouteStatus.ACTIVE) {
@@ -240,7 +248,7 @@ public class RouteService {
         return toResponse(routeRepository.saveAndFlush(route));
     }
 
-    public RouteResponse markGoodsDelivered(Long routeId, Long goodsId) {
+    public RouteResponse markGoodsDelivered(@Positive Long routeId, @Positive Long goodsId) {
         Route route = findRouteForMutation(routeId);
         if (route.getStatus() != RouteStatus.ACTIVE) {
             throw new RouteConflictException("Goods can only be delivered on an ACTIVE route.");
@@ -358,7 +366,7 @@ public class RouteService {
         return released;
     }
 
-    public void delete(Long id) {
+    public void delete(@Positive Long id) {
         Route route = findRouteForMutation(id);
         if (route.getStatus() != RouteStatus.PLANNED && route.getStatus() != RouteStatus.CANCELLED) {
             throw new RouteConflictException("Only PLANNED or CANCELLED routes can be deleted.");
@@ -500,6 +508,11 @@ public class RouteService {
     }
 
     private static Set<Long> validateStops(List<RouteStopRequest> stops) {
+        if (stops == null || stops.isEmpty() || stops.size() > MAX_GOODS_PER_ROUTE * 2) {
+            throw new InvalidRouteException(
+                    "A route can contain at most " + MAX_GOODS_PER_ROUTE + " freight items."
+            );
+        }
         Map<Long, EnumSet<RouteStopType>> stopTypesByGoods = new HashMap<>();
         Map<Long, Integer> pickupOrder = new HashMap<>();
         Map<Long, Integer> deliveryOrder = new HashMap<>();
@@ -528,12 +541,20 @@ public class RouteService {
                 );
             }
         }
+        if (stopTypesByGoods.size() > MAX_GOODS_PER_ROUTE) {
+            throw new InvalidRouteException(
+                    "A route can contain at most " + MAX_GOODS_PER_ROUTE + " freight items."
+            );
+        }
         return Set.copyOf(stopTypesByGoods.keySet());
     }
 
     private static void validateDepartureTime(OffsetDateTime departureTime) {
         if (departureTime == null) {
             throw new InvalidRouteException("Departure time is required.");
+        }
+        if (!departureTime.isAfter(OffsetDateTime.now(ZoneOffset.UTC))) {
+            throw new InvalidRouteException("Departure time must be in the future.");
         }
     }
 

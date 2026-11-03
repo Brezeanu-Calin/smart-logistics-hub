@@ -6,7 +6,9 @@ import ro.logistics.smart_logistics.driver.dto.DriverResponse;
 import ro.logistics.smart_logistics.driver.dto.DriverStatusRequest;
 
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Positive;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -22,6 +24,7 @@ import java.net.URI;
 import java.util.List;
 
 @RestController
+@Validated
 @RequestMapping("/api/drivers")
 public class DriverController {
     private final DriverService driverService;
@@ -36,7 +39,7 @@ public class DriverController {
     }
 
     @GetMapping("/{id}")
-    public DriverResponse findById(@PathVariable Long id) {
+    public DriverResponse findById(@PathVariable @Positive Long id) {
         return driverService.findById(id);
     }
 
@@ -52,7 +55,7 @@ public class DriverController {
 
     @PutMapping("/{id}")
     public DriverResponse update(
-            @PathVariable Long id,
+            @PathVariable @Positive Long id,
             @Valid @RequestBody DriverRequest request
     ) {
         return driverService.update(id, request);
@@ -60,14 +63,14 @@ public class DriverController {
 
     @PatchMapping("/{id}/status")
     public DriverResponse updateStatus(
-            @PathVariable Long id,
+            @PathVariable @Positive Long id,
             @Valid @RequestBody DriverStatusRequest request
     ) {
         return driverService.updateDispatcherManagedStatus(id, request.status());
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
+    public ResponseEntity<Void> delete(@PathVariable @Positive Long id) {
         driverService.delete(id);
         return ResponseEntity.noContent().build();
     }

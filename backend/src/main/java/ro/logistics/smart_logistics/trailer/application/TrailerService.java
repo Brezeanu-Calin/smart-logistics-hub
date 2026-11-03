@@ -12,12 +12,17 @@ import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
 
 import java.util.List;
 import java.util.Locale;
 
 @Service
 @Transactional
+@Validated
 public class TrailerService {
     private static final List<RouteStatus> ACTIVE_OR_PLANNED = List.of(RouteStatus.PLANNED, RouteStatus.ACTIVE);
 
@@ -37,11 +42,11 @@ public class TrailerService {
     }
 
     @Transactional(readOnly = true)
-    public TrailerResponse findById(Long id) {
+    public TrailerResponse findById(@Positive Long id) {
         return toResponse(findTrailer(id));
     }
 
-    public TrailerResponse create(TrailerRequest request) {
+    public TrailerResponse create(@Valid TrailerRequest request) {
         String plate = normalizePlate(request.licensePlate());
         ensurePlateAvailable(plate, null);
         Trailer trailer = new Trailer(
@@ -57,7 +62,7 @@ public class TrailerService {
         return save(trailer, plate);
     }
 
-    public TrailerResponse update(Long id, TrailerRequest request) {
+    public TrailerResponse update(@Positive Long id, @Valid TrailerRequest request) {
         Trailer trailer = lockTrailer(id);
         ensureNotScheduled(trailer);
         String plate = normalizePlate(request.licensePlate());
@@ -75,7 +80,7 @@ public class TrailerService {
         return save(trailer, plate);
     }
 
-    public TrailerResponse updateDispatcherManagedStatus(Long id, TrailerStatus status) {
+    public TrailerResponse updateDispatcherManagedStatus(@Positive Long id, @NotNull TrailerStatus status) {
         Trailer trailer = lockTrailer(id);
         if (trailer.getStatus() == TrailerStatus.IN_TRANSIT) {
             throw new InvalidTrailerStatusException("Trailer status cannot be changed manually while IN_TRANSIT.");
@@ -93,7 +98,7 @@ public class TrailerService {
         return toResponse(trailerRepository.save(trailer));
     }
 
-    public void delete(Long id) {
+    public void delete(@Positive Long id) {
         Trailer trailer = lockTrailer(id);
         ensureNotScheduled(trailer);
         trailerRepository.delete(trailer);

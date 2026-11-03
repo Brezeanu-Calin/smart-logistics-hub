@@ -108,7 +108,7 @@ const goodsForm = reactive<GoodsRequest>({
   goodsType: 'GENERAL',
   description: null,
   weightKg: 1,
-  revenueEur: 0,
+  revenueEur: null,
   volumeM3: 1,
   pickupCity: '',
   deliveryCity: '',
@@ -287,7 +287,7 @@ function openRoutePlanner() {
   section.value = 'routes'
   mobileMoreOpen.value = false
   routePlannerOpen.value = true
-  if (!routeForm.departureLocal) routeForm.departureLocal = defaultDepartureTime()
+  routeForm.departureLocal = defaultDepartureTime()
 }
 
 function startRefresh() {
@@ -914,12 +914,13 @@ async function recordMaintenance(vehicle: Vehicle, component: VehicleMaintenance
   const entry = maintenanceEntry(vehicle, component)
   const performedAt = new Date(entry.performedAtLocal)
   const odometerKm = Number(entry.odometerKm)
-  const costEur = Number(entry.costEur)
+  const costText = entry.costEur.trim()
+  const costEur = costText ? Number(costText) : null
   if (!entry.performedAtLocal || Number.isNaN(performedAt.getTime())
     || !Number.isInteger(odometerKm) || odometerKm < 0
-    || !entry.costEur || !Number.isFinite(costEur) || costEur < 0
-    || !/^\d+(\.\d{1,2})?$/.test(entry.costEur)) {
-    error.value = 'Enter a valid service date, odometer reading, and non-negative EUR cost (up to two decimals).'
+    || (costEur !== null && (!Number.isFinite(costEur) || costEur < 0 || costEur > 9_999_999_999.99
+      || !/^\d+(\.\d{1,2})?$/.test(costText)))) {
+    error.value = 'Enter a valid service date and odometer, plus an optional cost from €0 to €9,999,999,999.99 with at most two decimals.'
     return
   }
   if (odometerKm > vehicle.currentMileageKm) {
@@ -927,7 +928,7 @@ async function recordMaintenance(vehicle: Vehicle, component: VehicleMaintenance
     return
   }
   if (!window.confirm(
-    `Confirm ${component.label} on ${vehicle.licensePlate} was completed ${performedAt.toLocaleString()} at ${odometerKm.toLocaleString()} km for €${costEur.toFixed(2)}?`,
+    `Confirm ${component.label} on ${vehicle.licensePlate} was completed ${performedAt.toLocaleString()} at ${odometerKm.toLocaleString()} km${costEur === null ? ' with no cost recorded' : ` for €${costEur.toFixed(2)}`}?`,
   )) return
   await mutate(
     () => api.post(`/vehicles/${vehicle.id}/maintenance`, {
@@ -948,7 +949,7 @@ function resetGoodsForm() {
     goodsType: 'GENERAL',
     description: null,
     weightKg: 1,
-    revenueEur: 0,
+    revenueEur: null,
     volumeM3: 1,
     pickupCity: warehouseCity.value,
     deliveryCity: '',
@@ -962,7 +963,7 @@ function editGoods(item: Goods) {
     goodsType: item.goodsType,
     description: item.description,
     weightKg: item.weightKg,
-    revenueEur: item.revenueEur ?? 0,
+    revenueEur: item.revenueEur,
     volumeM3: item.volumeM3,
     pickupCity: item.pickupCity,
     deliveryCity: item.deliveryCity,
@@ -972,12 +973,23 @@ function editGoods(item: Goods) {
 
 async function saveGoods() {
   clearMessages()
+  const revenueText = String(goodsForm.revenueEur ?? '').trim()
+  const revenueEur = revenueText ? Number(revenueText) : null
+  if (goodsForm.pickupCity.trim().toLocaleLowerCase() === goodsForm.deliveryCity.trim().toLocaleLowerCase()) {
+    error.value = 'Pickup and delivery cities must be different.'
+    return
+  }
+  if (revenueEur !== null && (!Number.isFinite(revenueEur) || revenueEur < 0 || revenueEur > 9_999_999_999.99
+    || !/^\d+(\.\d{1,2})?$/.test(revenueText))) {
+    error.value = 'Freight revenue must be between €0 and €9,999,999,999.99 with at most two decimals, or left blank.'
+    return
+  }
   busy.value = true
   try {
     if (editingGoodsId.value === null) {
-      await api.post('/goods', goodsForm)
+      await api.post('/goods', { ...goodsForm, revenueEur })
     } else {
-      await api.put(`/goods/${editingGoodsId.value}`, goodsForm)
+      await api.put(`/goods/${editingGoodsId.value}`, { ...goodsForm, revenueEur })
     }
     success.value = editingGoodsId.value === null ? 'Freight added.' : 'Freight updated.'
     resetGoodsForm()
@@ -995,9 +1007,9 @@ async function deleteGoods(item: Goods) {
 }
 
 function defaultDepartureTime() {
-  const now = new Date()
-  now.setMinutes(now.getMinutes() - now.getTimezoneOffset())
-  return now.toISOString().slice(0, 16)
+  const departure = new Date(Date.now() + 60_000)
+  departure.setMinutes(departure.getMinutes() - departure.getTimezoneOffset())
+  return departure.toISOString().slice(0, 16)
 }
 
 async function createRoute() {
@@ -1016,12 +1028,17 @@ async function createRoute() {
     error.value = 'A route can contain at most 12 freight items (24 pickup/delivery stops).'
     return
   }
+  const departure = new Date(routeForm.departureLocal)
+  if (!Number.isFinite(departure.getTime()) || departure.getTime() <= Date.now()) {
+    error.value = 'Departure time must be in the future.'
+    return
+  }
   busy.value = true
   try {
     const request: RouteCreateRequest = {
       driverId: Number(routeForm.driverId),
       vehicleId: Number(routeForm.vehicleId),
-      departureTime: new Date(routeForm.departureLocal).toISOString(),
+      departureTime: departure.toISOString(),
       trailerId: routeNeedsTrailer.value ? Number(routeForm.trailerId) : null,
       stops: [
         ...selectedGoodsIds.value.map((goodsId) => ({ goodsId, type: 'PICKUP' as const })),
@@ -1230,7 +1247,7 @@ routeForm.departureLocal = defaultDepartureTime()
               <label>Driver<select v-model.number="routeForm.driverId" required><option :value="0" disabled>Select an available driver</option><option v-for="driver in drivers.filter((item) => item.status === 'AVAILABLE' && !isDriverScheduled(item.id))" :key="driver.id" :value="driver.id">{{ driver.name }} · {{ driver.licenseCategories.join(', ') }}</option></select></label>
               <label>Vehicle<select v-model.number="routeForm.vehicleId" required><option :value="0" disabled>Select an available vehicle</option><option v-for="vehicle in vehicles.filter((item) => item.status === 'AVAILABLE' && !item.maintenanceAutoTriggered && !isVehicleScheduled(item.id))" :key="vehicle.id" :value="vehicle.id">{{ vehicle.licensePlate }} · {{ vehicle.vehicleType.replaceAll('_', ' ') }}</option></select></label>
               <label v-if="routeNeedsTrailer" class="trailer-select-label">Trailer {{ selectedRouteVehicle?.vehicleType === 'ARTICULATED_TRUCK' ? '(required)' : '(required for this load)' }}<select v-model.number="routeForm.trailerId" required><option :value="0" disabled>Select a compatible available trailer</option><option v-for="trailer in compatibleRouteTrailers" :key="trailer.id" :value="trailer.id">{{ trailer.licensePlate }} · {{ trailerTypeLabel(trailer.trailerType) }} · {{ trailer.maxWeightCapacityKg.toLocaleString() }} kg / {{ trailer.maxVolumeM3 }} m³</option></select><small v-if="!compatibleRouteTrailers.length">No matching trailer available. <button type="button" class="text-button" @click="section = 'fleet'">Add a trailer in Fleet Ops</button></small></label>
-              <label>Departure time<input v-model="routeForm.departureLocal" type="datetime-local" required></label>
+              <label>Departure time<input v-model="routeForm.departureLocal" type="datetime-local" :min="routeForm.departureLocal" required></label>
               <fieldset class="goods-picker"><legend>Unassigned freight <span>{{ selectedGoodsIds.length }} selected</span></legend><div v-if="!unassignedGoods.length" class="small-empty">No unassigned freight is available.</div><label v-for="item in unassignedGoods" :key="item.id" class="check-row"><input v-model="selectedGoodsIds" type="checkbox" :value="item.id"><span><strong>{{ item.clientName }}</strong><small>{{ item.trackingCode }} · {{ item.pickupCity }} → {{ item.deliveryCity }}</small></span><b>{{ item.weightKg }} kg</b></label></fieldset>
               <div v-if="selectedGoods.length" class="selected-order"><strong>Pickup and delivery order</strong><p>All pickups are planned first; delivery order follows this list. Use the arrows to reorder.</p><ol><li v-for="(item, index) in selectedGoods" :key="item.id"><span class="order-number">{{ index + 1 }}</span><span class="order-name">{{ item.clientName }} <small>{{ item.trackingCode }}</small></span><button type="button" :disabled="index === 0" :aria-label="`Move ${item.clientName} up`" @click="moveSelectedGoods(index, -1)">↑</button><button type="button" :disabled="index === selectedGoods.length - 1" :aria-label="`Move ${item.clientName} down`" @click="moveSelectedGoods(index, 1)">↓</button></li></ol></div>
               <div class="form-actions"><button class="primary-button" :disabled="busy || !routeForm.driverId || !routeForm.vehicleId || selectedGoodsIds.length > 12 || (routeNeedsTrailer && (!routeForm.trailerId || !compatibleRouteTrailers.some((item) => item.id === routeForm.trailerId)))">Calculate &amp; plan route</button><span>City-level estimates use geocoded city locations, not exact pickup or delivery points. Freight type, combined weight/volume, vehicle, and trailer compatibility are checked before planning.</span></div>
@@ -1282,7 +1299,7 @@ routeForm.departureLocal = defaultDepartureTime()
               <label>Client name<input v-model.trim="goodsForm.clientName" maxlength="150" required></label>
               <label>Freight type<select v-model="goodsForm.goodsType"><option value="GENERAL">General cargo</option><option value="REFRIGERATED">Refrigerated</option><option value="HAZARDOUS">Hazardous</option><option value="OVERSIZED">Oversized / heavy haul</option><option value="BULK">Dry bulk</option><option value="LIQUID">Liquid</option><option value="CONTAINERIZED">Containerized</option><option value="VEHICLES">Vehicles</option><option value="LIVESTOCK">Livestock</option></select></label>
               <label>Weight (kg)<input v-model.number="goodsForm.weightKg" type="number" min="0.01" step="0.01" required></label>
-              <label>Freight revenue (EUR)<input v-model.number="goodsForm.revenueEur" type="number" min="0" step="0.01" required></label>
+              <label>Freight revenue (EUR) <span class="optional">(optional)</span><input v-model.number="goodsForm.revenueEur" type="number" min="0" max="9999999999.99" step="0.01"></label>
               <label>Volume (m³)<input v-model.number="goodsForm.volumeM3" type="number" min="0.01" step="0.01" required></label>
               <label class="full-width">Pickup city<input v-model.trim="goodsForm.pickupCity" :placeholder="warehouseCity" maxlength="500" required></label>
               <label class="full-width">Delivery city<input v-model.trim="goodsForm.deliveryCity" maxlength="500" required></label>

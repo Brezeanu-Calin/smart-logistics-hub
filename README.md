@@ -128,9 +128,10 @@ find. `POST /api/routes/{id}/directions` recalculates and saves road geometry
 for an existing route, including demo routes with illustrative straight-line
 geometry; the frontend calls this when opening a route map.
 
-Create routes with `POST /api/routes`, selecting a driver, vehicle, timezone-aware
-departure time, and ordered stops containing one pickup and one later delivery
-for every good. The server calculates the estimated depot arrival and route
+Create routes with `POST /api/routes`, selecting a driver, vehicle, future
+timezone-aware departure time, and ordered stops containing one pickup and one
+later delivery for every good. A route can contain at most 12 freight items
+(24 stops). The server calculates the estimated depot arrival and route
 distance; clients must not submit their own arrival estimate. Route creation
 sets goods to `ASSIGNED`; activating through `PATCH /api/routes/{id}/status`
 sets the driver, vehicle, optional trailer, and goods to `IN_TRANSIT`. Confirm
@@ -170,7 +171,8 @@ of interrupting an active route. Record completed work with
 `POST /api/vehicles/{id}/maintenance` and body
 `{"componentKey":"engine-oil-filter","performedAt":"2026-10-01T08:00:00Z","odometerKm":123456,"costEur":250.00}`.
 The date and odometer are the values from when the operation actually took
-place. Vehicles without service history for a fixed-interval component remain
+place. Service cost is optional; blank costs remain unset. Vehicles without
+service history for a fixed-interval component remain
 unavailable until that operation is recorded.
 When a dispatcher changes a vehicle from maintenance to available, the system
 records a completed service operation for every interval-tracked component at
@@ -184,6 +186,8 @@ cancelled route cannot be deleted while its assigned resources are still
 returning. Drivers, vehicles, and freight also have delete endpoints; records
 still referenced by route history cannot be deleted. Freight can be created
 manually in the Vue frontend or proposed through the AI operations assistant.
+Freight revenue is optional; a blank value remains unpriced (`null`) in finance
+reports rather than being recorded as zero.
 
 Example create request:
 
