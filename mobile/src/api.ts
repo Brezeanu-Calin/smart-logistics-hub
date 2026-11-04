@@ -63,6 +63,7 @@ export interface Trailer {
   maxWeightCapacityKg: number
   maxVolumeM3: number
   status: Status
+  maintenanceAutoTriggered: boolean
   maintenanceComponents: TrailerMaintenanceComponent[]
   maintenanceHistory: TrailerMaintenanceRecord[]
 }

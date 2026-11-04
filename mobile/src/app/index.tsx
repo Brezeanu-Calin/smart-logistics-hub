@@ -50,10 +50,15 @@ type FormModal = {
 }
 type ChatLine = AssistantMessage & { action?: AssistantAction }
 
-const TABS: Tab[] = ['Home', 'Routes', 'Freight', 'Drivers', 'Fleet', 'Service', 'Finance']
+const TABS: Tab[] = ['Home', 'Routes', 'Freight', 'Drivers', 'Service', 'Finance']
 const ACCENT = '#f59e0b'
 const NAVY = '#111416'
 const MAX_OPERATIONAL_CONTEXT_BYTES = 150_000
+const OPERATIONAL_TOPIC = /\b(?:haulmaster|logistics|operations?|dispatch)\b/i
+const ROUTE_REQUEST = /\b(?:ship|send|move|haul|transport|pick up)\b/i
+const CRUD_REQUEST = /\b(?:create|add|update|change|delete|remove)\b/i
+const OPERATIONAL_ENTITY = /\b(?:drivers?|vehicles?|trucks?|fleet|trailers?|freight|shipments?|goods|routes?|deliver(?:y|ies|ed)?|maintenance|finance|revenue|profit|clients?|cargo|metal|earnings?|income|costs?|margins?)\b/i
+const OPERATIONAL_INTENT = /\b(?:our|my|we|how many|which|who|show|list|status|available|in service|due|assigned|unassigned|current|currently|planned|active|overdue|create|add|update|change|delete|remove|record|assign|plan|deliver|set|mark|have)\b/i
 const GOODS_TYPES: GoodsType[] = [
   'GENERAL', 'REFRIGERATED', 'HAZARDOUS', 'OVERSIZED', 'BULK',
   'LIQUID', 'CONTAINERIZED', 'VEHICLES', 'LIVESTOCK',
@@ -78,6 +83,46 @@ const dateTimeInputValue = (value: Date) => {
   const adjusted = new Date(value.getTime() - value.getTimezoneOffset() * 60_000)
   return adjusted.toISOString().slice(0, 16)
 }
+const contextDomains = (messages: AssistantMessage[]) => {
+  const recentUserMessages = messages
+    .filter((message) => message.role === 'user')
+    .slice(-3)
+    .map((message) => message.content)
+    .join('\n')
+  const isOperational = OPERATIONAL_TOPIC.test(recentUserMessages)
+    || ROUTE_REQUEST.test(recentUserMessages)
+    || CRUD_REQUEST.test(recentUserMessages)
+    || (OPERATIONAL_ENTITY.test(recentUserMessages) && OPERATIONAL_INTENT.test(recentUserMessages))
+  if (!isOperational) return null
+
+  const requested = {
+    drivers: /\bdrivers?\b/i.test(recentUserMessages),
+    vehicles: /\b(?:vehicles?|trucks?|fleet)\b/i.test(recentUserMessages),
+    trailers: /\btrailers?\b/i.test(recentUserMessages),
+    freight: /\b(?:freight|shipments?|goods|clients?|cargo|metal)\b/i.test(recentUserMessages) || ROUTE_REQUEST.test(recentUserMessages),
+    routes: /\b(?:routes?|deliver(?:y|ies|ed)?|dispatch)\b/i.test(recentUserMessages) || ROUTE_REQUEST.test(recentUserMessages),
+    maintenance: /\bmaintenance\b/i.test(recentUserMessages),
+    finance: /\b(?:finance|revenue|profit|earnings?|income|costs?|margins?)\b/i.test(recentUserMessages),
+    includeMargins: /\b(?:margins?|profitability)\b/i.test(recentUserMessages),
+  }
+  if (requested.routes) {
+    requested.drivers = true
+    requested.vehicles = true
+    requested.trailers = true
+    requested.freight = true
+  }
+  if (requested.maintenance) {
+    requested.vehicles = true
+    requested.trailers = true
+  }
+  if (!Object.values(requested).some(Boolean)) {
+    return {
+      drivers: true, vehicles: true, trailers: true, freight: true, routes: true,
+      maintenance: true, finance: true, includeMargins: requested.includeMargins,
+    }
+  }
+  return requested
+}
 const money = (value: number | null | undefined) =>
   value == null ? 'Not recorded' : `€${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const displayStatus = (value: string) => value.replaceAll('_', ' ').toLowerCase()
@@ -87,6 +132,12 @@ function toFormValues(value: object) {
     key,
     item == null ? '' : Array.isArray(item) ? item.join(', ') : String(item),
   ]))
+}
+
+function assistantFinanceContext(report: FinanceReport | null, includeMargins: boolean) {
+  if (!report) return null
+  const { freightMargins, ...summary } = report
+  return { ...summary, ...(includeMargins ? { freightMargins } : {}) }
 }
 
 function confirm(title: string, message: string, action: () => void) {
@@ -115,12 +166,21 @@ function MobileApp() {
   const [notice, setNotice] = useState('')
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<FormModal | null>(null)
+  const [selectedDriverId, setSelectedDriverId] = useState<number | null>(null)
   const [chat, setChat] = useState<ChatLine[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatBusy, setChatBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState<AssistantAction | null>(null)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [expandedHealth, setExpandedHealth] = useState<Record<string, boolean>>({})
+  const selectedDriver = drivers.find((driver) => driver.id === selectedDriverId) ?? null
+  const driverRoutes = selectedDriver ? routes.filter((route) => route.driverId === selectedDriver.id) : []
+
+  const driverForVehicle = (vehicleId: number) => routes.find((route) =>
+    route.vehicleId === vehicleId
+    && (route.status === 'PLANNED' || route.status === 'ACTIVE'
+      || (route.status === 'COMPLETED' && route.estimatedReturnTime && !route.returnedAt)),
+  )
 
   const setTab = (nextTab: Tab) => {
     router.setParams({ screen: nextTab.toLowerCase() })
@@ -192,7 +252,8 @@ function MobileApp() {
         && (route.status === 'PLANNED' || route.status === 'ACTIVE'))).length,
     unassignedGoods: goods.filter((item) => item.status === 'UNASSIGNED').length,
     dueVehicles: vehicles.filter((vehicle) => vehicle.status === 'MAINTENANCE').length,
-  }), [drivers, goods, routes, vehicles])
+    dueTrailers: trailers.filter((trailer) => trailer.status === 'MAINTENANCE').length,
+  }), [drivers, goods, routes, trailers, vehicles])
 
   const hasScheduledDriverRoute = (id: number) => routes.some((route) =>
     route.driverId === id && (route.status === 'PLANNED' || route.status === 'ACTIVE'))
@@ -266,7 +327,7 @@ function MobileApp() {
     switch (modal.kind) {
       case 'freight': {
         const revenueText = text('revenueEur')
-        const revenueEur = revenueText ? Number(revenueText) : Number.NaN
+        const revenueEur = revenueText ? Number(revenueText) : null
         const weightKg = number('weightKg')
         const volumeM3 = number('volumeM3')
         if (!text('clientName') || text('clientName').length > 150
@@ -284,10 +345,9 @@ function MobileApp() {
           invalid('Weight and volume must be finite values greater than zero.')
           return
         }
-        if (!revenueText || !Number.isFinite(revenueEur) || revenueEur < 0
-          || revenueEur > 9_999_999_999.99
-          || !/^\d+(\.\d{1,2})?$/.test(revenueText)) {
-          invalid('Freight revenue is required and must be between €0 and €9,999,999,999.99 with at most two decimals.')
+        if (revenueText && (revenueEur === null || !Number.isFinite(revenueEur) || revenueEur < 0
+          || revenueEur > 9_999_999_999.99 || !/^\d+(\.\d{1,2})?$/.test(revenueText))) {
+          invalid('Freight revenue must be between €0 and €9,999,999,999.99 with at most two decimals.')
           return
         }
         path = id === undefined ? '/goods' : `/goods/${id}`
@@ -450,6 +510,7 @@ function MobileApp() {
         }
         if (trailerId !== null && !trailers.some((item) => item.id === trailerId
           && item.status === 'AVAILABLE'
+          && !item.maintenanceAutoTriggered
           && !routes.some((route) => route.id !== id && route.trailerId === trailerId
             && (route.status === 'PLANNED' || route.status === 'ACTIVE')))) {
           setError('Select an available trailer or choose No trailer.')
@@ -598,9 +659,36 @@ function MobileApp() {
     setChatBusy(true)
     setError('')
     try {
-      const context = { drivers, vehicles, trailers, goods, routes }
+      const domains = contextDomains(history)
+      const warehouse = domains?.freight ? await request<{ warehouseCity: string }>('/config') : null
+      const context = domains ? {
+        ...(domains.drivers ? { drivers } : {}),
+        ...(domains.vehicles ? {
+          vehicles: vehicles.map(({ maintenanceComponents, ...vehicle }) => ({
+            ...vehicle,
+            maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur }) =>
+              ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur })),
+          })),
+        } : {}),
+        ...(domains.trailers ? {
+          trailers: trailers.map(({ maintenanceHistory: _maintenanceHistory, maintenanceComponents, ...trailer }) => ({
+            ...trailer,
+            maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur }) =>
+              ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur })),
+          })),
+        } : {}),
+        ...(domains.freight ? { goods } : {}),
+        ...(warehouse ? { warehouseCity: warehouse.warehouseCity } : {}),
+        ...(domains.routes ? {
+          routes: routes.map(({ geometry: _geometry, stops, ...route }) => ({
+            ...route,
+            stops: stops.map(({ latitude: _latitude, longitude: _longitude, ...stop }) => stop),
+          })),
+        } : {}),
+        ...(domains.finance ? { finance: assistantFinanceContext(finance, domains.includeMargins) } : {}),
+      } : {}
       if (new TextEncoder().encode(JSON.stringify(context)).byteLength > MAX_OPERATIONAL_CONTEXT_BYTES) {
-        throw new Error('Operational context must be a JSON object no larger than 150 KB.')
+        throw new Error('The live operations snapshot is too large to send. Narrow the question or reduce the operational data set.')
       }
       const reply = await send<AssistantReply>('/assistant/chat', 'POST', {
         messages: history,
@@ -730,7 +818,7 @@ function MobileApp() {
               <Stat label="Unassigned freight" value={counts.unassignedGoods} tone="orange" />
             </View>
             <Card title="Recent routes" subtitle="Latest dispatches and delivery progress" action={<LinkButton label="All routes" onPress={() => setTab('Routes')} />}>
-              {!routes.length ? <Empty>No routes yet. Plan a route when freight is ready.</Empty> : routes.slice(0, 4).map((route) => <RouteCard key={route.id} route={route} goods={goods} onAction={handleRouteAction} />)}
+              {!routes.length ? <Empty>No routes yet. Plan a route when freight is ready.</Empty> : routes.slice(0, 4).map((route) => <RouteCard key={route.id} route={route} goods={goods} onAction={handleRouteAction} onDriverPress={setSelectedDriverId} />)}
             </Card>
             <Card title="Quick actions">
               <View style={styles.actionGrid}>
@@ -748,9 +836,9 @@ function MobileApp() {
             <Card title="Active route map" subtitle="Positions are simulated from saved road geometry, not GPS.">
               {routes.filter((route) => route.status === 'ACTIVE').length === 0
                 ? <Empty>No active routes.</Empty>
-                : routes.filter((route) => route.status === 'ACTIVE').map((route) => <RouteMapCard key={route.id} route={route} position={simulationPositions[route.id]} />)}
+                : routes.filter((route) => route.status === 'ACTIVE').map((route) => <ActiveRouteCard key={route.id} route={route} position={simulationPositions[route.id]} onDriverPress={setSelectedDriverId} />)}
             </Card>
-            {routes.map((route) => <RouteCard key={route.id} route={route} goods={goods} onAction={handleRouteAction} onEdit={editRoute} expanded />)}
+            {routes.map((route) => <RouteCard key={route.id} route={route} goods={goods} onAction={handleRouteAction} onEdit={editRoute} onDriverPress={setSelectedDriverId} expanded />)}
           </>
         )}
 
@@ -782,6 +870,7 @@ function MobileApp() {
               <Card key={driver.id} title={driver.name} trailing={<Badge value={driver.status} />}>
                 <Text style={styles.bodyText}>{driver.email}</Text><Text style={styles.mutedText}>Licenses: {driver.licenseCategories.join(', ') || '—'}</Text>
                 <View style={styles.rowActions}>
+                  <LinkButton label="Driver details" onPress={() => setSelectedDriverId(driver.id)} />
                   {!hasScheduledDriverRoute(driver.id) && driver.status !== 'IN_TRANSIT' && driver.status !== 'RETURNING'
                     ? <LinkButton label="Edit" onPress={() => openForm('driver', driver, { editingId: driver.id })} />
                     : null}
@@ -810,6 +899,7 @@ function MobileApp() {
               <Card key={vehicle.id} title={`${vehicle.licensePlate} · ${vehicle.make} ${vehicle.model}`} trailing={<Badge value={vehicle.status} />}>
                 <Text style={styles.mutedText}>{displayStatus(vehicle.vehicleType)} · {vehicle.year} · {vehicle.currentMileageKm.toLocaleString()} km · {vehicle.maxWeightCapacityKg.toLocaleString()} kg</Text>
                 {vehicle.maintenanceAutoTriggered ? <Text style={styles.warningText}>Automatically held for maintenance.</Text> : null}
+                {driverForVehicle(vehicle.id) ? <LinkButton label={`Driver details · ${driverForVehicle(vehicle.id)?.driverName}`} onPress={() => setSelectedDriverId(driverForVehicle(vehicle.id)?.driverId ?? null)} /> : null}
                 <View style={styles.rowActions}>
                   {!hasScheduledVehicleRoute(vehicle.id) && vehicle.status !== 'IN_TRANSIT'
                     ? <LinkButton label="Edit" onPress={() => openForm('vehicle', vehicle, { editingId: vehicle.id })} />
@@ -833,6 +923,7 @@ function MobileApp() {
             {trailers.filter((trailer) => filtered(`${trailer.licensePlate} ${trailer.make} ${trailer.model} ${trailer.status}`)).map((trailer) => (
               <Card key={trailer.id} title={`${trailer.licensePlate} · ${trailer.make} ${trailer.model}`} trailing={<Badge value={trailer.status} />}>
                 <Text style={styles.mutedText}>{displayStatus(trailer.trailerType)} · compatible with {displayStatus(trailer.compatibleVehicleType)}</Text>
+                {trailer.maintenanceAutoTriggered ? <Text style={styles.warningText}>Automatically held for maintenance until all overdue components are serviced.</Text> : null}
                 <View style={styles.rowActions}>
                   {!hasScheduledTrailerRoute(trailer.id) && trailer.status !== 'IN_TRANSIT'
                     ? <LinkButton label="Edit" onPress={() => openForm('trailer', trailer, { editingId: trailer.id })} />
@@ -852,12 +943,14 @@ function MobileApp() {
 
         {tab === 'Service' && (
           <>
-            <Card title="Workshop queue" subtitle={`${counts.dueVehicles} vehicle(s) currently in maintenance`}>
-              {vehicles.filter((vehicle) => vehicle.status === 'MAINTENANCE').length === 0
-                ? <Empty>No vehicles currently due.</Empty>
-                : vehicles.filter((vehicle) => vehicle.status === 'MAINTENANCE').map((vehicle) => (
-                  <Text key={vehicle.id} style={styles.bodyText}>{vehicle.licensePlate} · {vehicle.make} {vehicle.model}</Text>
-                ))}
+            <Card title="Workshop queue" subtitle={`${counts.dueVehicles} vehicle(s) and ${counts.dueTrailers} trailer(s) currently in maintenance`}>
+              {!counts.dueVehicles && !counts.dueTrailers ? <Empty>No equipment currently due.</Empty> : null}
+              {vehicles.filter((vehicle) => vehicle.status === 'MAINTENANCE').map((vehicle) => (
+                <Text key={`vehicle-${vehicle.id}`} style={styles.bodyText}>{vehicle.licensePlate} · {vehicle.make} {vehicle.model} · vehicle</Text>
+              ))}
+              {trailers.filter((trailer) => trailer.status === 'MAINTENANCE').map((trailer) => (
+                <Text key={`trailer-${trailer.id}`} style={styles.bodyText}>{trailer.licensePlate} · {trailer.make} {trailer.model} · trailer</Text>
+              ))}
             </Card>
             {vehicles.map((vehicle) => (
               <Card key={vehicle.id} title={`${vehicle.licensePlate} · ${vehicle.make} ${vehicle.model}`} trailing={<Badge value={vehicle.status} />}>
@@ -1004,7 +1097,7 @@ function MobileApp() {
               </ScrollView>
               {pendingAction ? <Button label="Confirm latest proposal" disabled={chatBusy} onPress={() => void confirmAssistantAction()} /> : null}
               <View style={styles.chatComposer}>
-                <TextInput value={chatInput} onChangeText={setChatInput} placeholder="Ask the operations assistant…" placeholderTextColor="#6b7280" style={styles.chatInput} multiline />
+                <TextInput value={chatInput} onChangeText={setChatInput} placeholder="Ask a general or logistics question…" placeholderTextColor="#6b7280" style={styles.chatInput} multiline />
                 <Button label={chatBusy ? '…' : 'Send'} disabled={chatBusy || !chatInput.trim()} onPress={() => void sendAssistantMessage()} />
               </View>
             </View>
@@ -1012,6 +1105,27 @@ function MobileApp() {
         </View>
       </Modal>
 
+      <Modal visible={selectedDriver !== null} transparent animationType="slide" onRequestClose={() => setSelectedDriverId(null)}>
+        <View style={styles.modalScrim}>
+          <View style={styles.modalFrame}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.cardTitle}>{selectedDriver?.name ?? 'Driver details'}</Text>
+              <Pressable onPress={() => setSelectedDriverId(null)} accessibilityLabel="Close driver details"><Text style={styles.closeText}>×</Text></Pressable>
+            </View>
+            {selectedDriver ? (
+              <ScrollView contentContainerStyle={styles.modalContent}>
+                <Badge value={selectedDriver.status} />
+                <DataRow label="Email" value={selectedDriver.email} />
+                <DataRow label="License categories" value={selectedDriver.licenseCategories.join(', ') || '—'} />
+                <Text style={styles.subheading}>Route history ({driverRoutes.length})</Text>
+                {driverRoutes.length
+                  ? driverRoutes.map((route) => <DataRow key={route.id} label={`Route #${route.id} · ${displayStatus(route.status)}`} value={`${route.vehicleLicensePlate} · ${dateString(route.departureTime)}`} />)
+                  : <Empty>No route history recorded.</Empty>}
+              </ScrollView>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
       {modal ? (
         <FormEditor modal={modal} busy={busy} error={error} onChange={updateField} onClose={() => setModal(null)} onSave={() => void saveForm()} drivers={drivers} vehicles={vehicles} trailers={trailers} goods={goods} routes={routes} />
       ) : null}
@@ -1133,18 +1247,60 @@ function DataRow({ label, value }: { label: string; value: string }) {
   return <View style={styles.dataRow}><Text style={styles.bodyText}>{label}</Text><Text style={styles.mutedText}>{value}</Text></View>
 }
 
-function RouteMapCard({ route, position }: { route: Route; position?: RouteSimulationPosition }) {
+function ActiveRouteCard({
+  route,
+  position,
+  onDriverPress,
+}: {
+  route: Route
+  position?: RouteSimulationPosition
+  onDriverPress: (driverId: number) => void
+}) {
+  const [mapVisible, setMapVisible] = useState(true)
+  const [detailsVisible, setDetailsVisible] = useState(false)
   const valid = route.geometry.filter((point) => Number.isFinite(point.latitude) && Number.isFinite(point.longitude))
-  if (!valid.length) return null
   return (
-    <View style={styles.mapCard}>
-      <RouteMap coordinates={valid} position={position} />
-      <Text style={styles.mutedText}>Route #{route.id} · {route.vehicleLicensePlate} · {position ? `${Math.round(position.progress * 100)}% complete · ` : ''}simulated, not GPS</Text>
+    <View style={styles.activeRouteCard}>
+      <View style={styles.activeRouteHeading}>
+        <View style={styles.flex}>
+          <Pressable onPress={() => onDriverPress(route.driverId)} accessibilityRole="button">
+            <Text style={styles.cardTitle}>Route #{route.id} · {route.vehicleLicensePlate}</Text>
+          </Pressable>
+          <Text style={styles.mutedText}>{position ? `${Math.round(position.progress * 100)}% complete · ` : ''}simulated, not GPS</Text>
+        </View>
+        <View style={styles.activeRouteActions}>
+          <LinkButton label={detailsVisible ? 'Hide details' : 'Details'} onPress={() => setDetailsVisible((current) => !current)} />
+          <LinkButton label={mapVisible ? 'Hide map' : 'Show map'} onPress={() => setMapVisible((current) => !current)} />
+        </View>
+      </View>
+      {detailsVisible ? (
+        <View style={styles.stops}>
+          <LinkButton label={`Driver · ${route.driverName}`} onPress={() => onDriverPress(route.driverId)} />
+          <Text style={styles.mutedText}>{route.vehicleLicensePlate}{route.trailerLicensePlate ? ` · ${route.trailerLicensePlate}` : ''} · departs {dateString(route.departureTime)}</Text>
+          {route.stops.map((stop) => (
+            <View key={`${stop.goodsId}-${stop.type}`} style={styles.stopRow}>
+              <Text style={styles.stopType}>{stop.stopOrder}. {stop.type === 'PICKUP' ? 'Pickup' : 'Delivery'}</Text>
+              <Text style={styles.bodyText}>{stop.city}</Text>
+              <Text style={styles.mutedText}>{stop.trackingCode}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {mapVisible && valid.length
+        ? <View style={styles.mapCard}><RouteMap coordinates={valid} position={position} /></View>
+        : mapVisible ? <Empty>No saved route geometry is available.</Empty> : null}
     </View>
   )
 }
 
-function RouteCard({ route, goods, onAction, onEdit, expanded }: { route: Route; goods: Goods[]; onAction: (route: Route, action: 'start' | 'cancel' | 'delete' | 'deliver', goodsId?: number) => void; onEdit?: (route: Route) => void; expanded?: boolean }) {
+function RouteCard({ route, goods, onAction, onEdit, onDriverPress, expanded }: {
+  route: Route
+  goods: Goods[]
+  onAction: (route: Route, action: 'start' | 'cancel' | 'delete' | 'deliver', goodsId?: number) => void
+  onEdit?: (route: Route) => void
+  onDriverPress: (driverId: number) => void
+  expanded?: boolean
+}) {
   const pendingDeliveries = route.stops.filter((stop) =>
     stop.type === 'DELIVERY'
     && goods.find((item) => item.id === stop.goodsId)?.status === 'IN_TRANSIT'
@@ -1155,7 +1311,10 @@ function RouteCard({ route, goods, onAction, onEdit, expanded }: { route: Route;
       )))
   return (
     <Card title={`Route #${route.id}`} trailing={<Badge value={route.status} />}>
-      <Text style={styles.bodyText}>{route.driverName} · {route.vehicleLicensePlate}{route.trailerLicensePlate ? ` · ${route.trailerLicensePlate}` : ''}</Text>
+      <View style={styles.routeCrewRow}>
+        <LinkButton label={`Driver · ${route.driverName}`} onPress={() => onDriverPress(route.driverId)} />
+        <Text style={styles.bodyText}>{route.vehicleLicensePlate}{route.trailerLicensePlate ? ` · ${route.trailerLicensePlate}` : ''}</Text>
+      </View>
       <Text style={styles.mutedText}>{(route.distanceMeters / 1000).toFixed(1)} km · {Math.round(route.drivingDurationSeconds / 60)} min · departs {dateString(route.departureTime)}</Text>
       {expanded || route.status === 'ACTIVE' ? (
         <View style={styles.stops}>
@@ -1194,7 +1353,7 @@ function FormEditor({ modal, busy, error, onChange, onClose, onSave, drivers, ve
     freight: [
       { key: 'clientName', label: 'Client' }, { key: 'goodsType', label: 'Freight type', options: GOODS_TYPES },
       { key: 'description', label: 'Description' }, { key: 'weightKg', label: 'Weight (kg)', keyboard: 'decimal-pad' },
-      { key: 'volumeM3', label: 'Volume (m³)', keyboard: 'decimal-pad' }, { key: 'revenueEur', label: 'Revenue (€)', keyboard: 'decimal-pad' },
+      { key: 'volumeM3', label: 'Volume (m³)', keyboard: 'decimal-pad' }, { key: 'revenueEur', label: 'Revenue (€), optional', keyboard: 'decimal-pad' },
       { key: 'pickupCity', label: 'Pickup city' }, { key: 'deliveryCity', label: 'Delivery city' },
     ],
     driver: [
@@ -1239,6 +1398,7 @@ function FormEditor({ modal, busy, error, onChange, onClose, onSave, drivers, ve
     .map((vehicle) => ({ value: String(vehicle.id), label: vehicle.licensePlate, detail: `${vehicle.make} ${vehicle.model} · ${displayStatus(vehicle.vehicleType)}` }))
   const availableTrailers = trailers
     .filter((trailer) => trailer.status === 'AVAILABLE'
+      && !trailer.maintenanceAutoTriggered
       && trailer.compatibleVehicleType === vehicles.find((vehicle) => vehicle.id === Number(modal.values.vehicleId))?.vehicleType
       && !routes.some((route) => route.id !== modal.editingId && route.trailerId === trailer.id
         && (route.status === 'PLANNED' || route.status === 'ACTIVE')))
@@ -1351,6 +1511,10 @@ const styles = StyleSheet.create({
   card: { backgroundColor: '#161a1d', borderWidth: 1, borderColor: '#2d333b', padding: 14, gap: 10 },
   cardHeading: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8, paddingBottom: 9, borderBottomWidth: 1, borderBottomColor: '#2d333b' },
   cardTitle: { color: '#f3f4f6', fontSize: 14, fontWeight: '700', fontFamily: 'sans-serif' },
+  activeRouteCard: { gap: 8, borderTopWidth: 1, borderTopColor: '#2d333b', paddingTop: 10 },
+  activeRouteHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  activeRouteActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end' },
+  routeCrewRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
   mutedText: { color: '#9ca3af', fontSize: 10, lineHeight: 16 },
   bodyText: { color: '#d1d5db', fontSize: 12, lineHeight: 18 },
   emptyText: { paddingVertical: 8, color: '#9ca3af', fontSize: 12, lineHeight: 18 },

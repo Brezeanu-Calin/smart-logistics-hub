@@ -16,6 +16,10 @@ import java.util.Optional;
 public interface TrailerRepository extends JpaRepository<Trailer, Long> {
     List<Trailer> findAllByOrderByLicensePlateAsc();
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from Trailer t order by t.licensePlate asc")
+    List<Trailer> findAllForUpdate();
+
     List<Trailer> findAllByCompatibleVehicleTypeAndStatusOrderByLicensePlateAsc(
             VehicleType compatibleVehicleType,
             TrailerStatus status

@@ -56,6 +56,9 @@ public class Trailer {
     @Column(nullable = false, length = 20)
     private TrailerStatus status = TrailerStatus.AVAILABLE;
 
+    @Column(name = "maintenance_auto_triggered", nullable = false)
+    private boolean maintenanceAutoTriggered;
+
     protected Trailer() {
     }
 
@@ -112,6 +115,7 @@ public class Trailer {
             throw new IllegalArgumentException("IN_TRANSIT is managed by route assignment.");
         }
         this.status = status;
+        this.maintenanceAutoTriggered = false;
     }
 
     public void markInTransit() {
@@ -119,7 +123,25 @@ public class Trailer {
     }
 
     public void markAvailable() {
-        this.status = TrailerStatus.AVAILABLE;
+        this.status = maintenanceAutoTriggered ? TrailerStatus.MAINTENANCE : TrailerStatus.AVAILABLE;
+    }
+
+    public void markAutomaticMaintenance() {
+        this.maintenanceAutoTriggered = true;
+        if (status != TrailerStatus.IN_TRANSIT) {
+            this.status = TrailerStatus.MAINTENANCE;
+        }
+    }
+
+    public void clearAutomaticMaintenance() {
+        this.maintenanceAutoTriggered = false;
+        if (status == TrailerStatus.MAINTENANCE) {
+            this.status = TrailerStatus.AVAILABLE;
+        }
+    }
+
+    public boolean isMaintenanceAutoTriggered() {
+        return maintenanceAutoTriggered;
     }
 
     public Long getId() {

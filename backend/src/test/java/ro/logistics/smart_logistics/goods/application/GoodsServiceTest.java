@@ -20,6 +20,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -136,7 +137,7 @@ class GoodsServiceTest {
     }
 
     @Test
-    void saveGoodsRequiresRevenue() {
+    void saveGoodsAllowsUnpricedFreight() {
         GoodsDTO missingRevenue = new GoodsDTO(
                 "Client",
                 GoodsType.GENERAL,
@@ -148,8 +149,13 @@ class GoodsServiceTest {
                 "Bucharest"
         );
 
-        assertThrows(InvalidGoodsException.class, () -> goodsService.saveGoods(missingRevenue));
-        verify(goodsRepository, never()).saveAndFlush(any(Goods.class));
+        when(goodsRepository.existsByTrackingCode(anyString())).thenReturn(false);
+        when(goodsRepository.saveAndFlush(any(Goods.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        var response = goodsService.saveGoods(missingRevenue);
+
+        assertNull(response.revenueEur());
     }
 
     @Test

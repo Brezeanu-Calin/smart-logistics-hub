@@ -11,14 +11,16 @@ import ro.logistics.smart_logistics.trailer.dto.TrailerResponse;
 import ro.logistics.smart_logistics.trailer.persistence.TrailerRepository;
 import ro.logistics.smart_logistics.vehicle.domain.VehicleType;
 
-import org.springframework.dao.DataIntegrityViolationException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.validation.annotation.Validated;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
 
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.validation.annotation.Validated;
+
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Locale;
 
@@ -42,16 +44,19 @@ public class TrailerService {
         this.maintenanceService = maintenanceService;
     }
 
-    @Transactional(readOnly = true)
     public List<TrailerResponse> findAll() {
-        return trailerRepository.findAllByOrderByLicensePlateAsc().stream()
-                .map(this::toResponse)
+        return trailerRepository.findAllForUpdate().stream()
+                .map(trailer -> {
+                    maintenanceService.updateAutomaticMaintenanceState(trailer, OffsetDateTime.now());
+                    return toResponse(trailer);
+                })
                 .toList();
     }
 
-    @Transactional(readOnly = true)
     public TrailerResponse findById(@Positive Long id) {
-        return toResponse(findTrailer(id));
+        Trailer trailer = lockTrailer(id);
+        maintenanceService.updateAutomaticMaintenanceState(trailer, OffsetDateTime.now());
+        return toResponse(trailer);
     }
 
     public TrailerResponse create(@Valid TrailerRequest request) {
@@ -67,7 +72,9 @@ public class TrailerService {
                 request.maxWeightCapacityKg(),
                 request.maxVolumeM3()
         );
-        return save(trailer, plate);
+        Trailer saved = saveEntity(trailer, plate);
+        maintenanceService.updateAutomaticMaintenanceState(saved, OffsetDateTime.now());
+        return toResponse(saved);
     }
 
     public TrailerResponse update(@Positive Long id, @Valid TrailerRequest request) {
@@ -85,7 +92,9 @@ public class TrailerService {
                 request.maxWeightCapacityKg(),
                 request.maxVolumeM3()
         );
-        return save(trailer, plate);
+        Trailer saved = saveEntity(trailer, plate);
+        maintenanceService.updateAutomaticMaintenanceState(saved, OffsetDateTime.now());
+        return toResponse(saved);
     }
 
     public TrailerResponse updateDispatcherManagedStatus(@Positive Long id, @NotNull TrailerStatus status) {
@@ -97,6 +106,10 @@ public class TrailerService {
             throw new InvalidTrailerStatusException(
                     "Trailer status cannot be changed while assigned to a PLANNED or ACTIVE route."
             );
+        }
+        maintenanceService.updateAutomaticMaintenanceState(trailer, OffsetDateTime.now());
+        if (status == TrailerStatus.AVAILABLE && trailer.getStatus() == TrailerStatus.MAINTENANCE) {
+            maintenanceService.completeMaintenance(trailer);
         }
         try {
             trailer.updateDispatcherManagedStatus(status);
@@ -132,9 +145,9 @@ public class TrailerService {
         }
     }
 
-    private TrailerResponse save(Trailer trailer, String plate) {
+    private Trailer saveEntity(Trailer trailer, String plate) {
         try {
-            return toResponse(trailerRepository.saveAndFlush(trailer));
+            return trailerRepository.saveAndFlush(trailer);
         } catch (DataIntegrityViolationException exception) {
             throw new DuplicateTrailerLicensePlateException(plate);
         }
@@ -147,10 +160,6 @@ public class TrailerService {
         if (exists) {
             throw new DuplicateTrailerLicensePlateException(plate);
         }
-    }
-
-    private Trailer findTrailer(Long id) {
-        return trailerRepository.findById(id).orElseThrow(() -> new TrailerNotFoundException(id));
     }
 
     private Trailer lockTrailer(Long id) {
@@ -185,6 +194,7 @@ public class TrailerService {
                 trailer.getMaxWeightCapacityKg(),
                 trailer.getMaxVolumeM3(),
                 trailer.getStatus(),
+                trailer.isMaintenanceAutoTriggered(),
                 maintenanceService.componentsFor(trailer),
                 maintenanceService.historyFor(trailer)
         );

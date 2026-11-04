@@ -31,7 +31,14 @@ eligible for dispatch instead of being incorrectly flagged for immediate
 maintenance.
 Migration V9 adds EUR freight revenue and maintenance costs, additional freight
 and trailer categories, and explicit trailer-to-vehicle compatibility. Existing
-financial values remain unset rather than being fabricated.
+financial values remain unset unless a migration seeds them for financial testing.
+Migration V12 adds automatic trailer-maintenance holds, matching vehicle health
+thresholds and service completion behavior. Trailers without service history are
+held from dispatch until their tracked components are serviced.
+Migration V13 adds eight drivers, vehicles, and recently delivered freight
+shipments with EUR revenue, plus trailer service histories and priced vehicle
+maintenance operations. This gives the Finance page a range of current-month
+revenue, operating costs, category totals, and driver/vehicle contribution data.
 
 The Vue app uses `VITE_API_BASE_URL` when set and otherwise calls
 `http://localhost:8080/api`. The backend exposes `/api/config` so the frontend
@@ -53,8 +60,8 @@ API remain unprotected, so do not expose this version as a secured service or
 use real/private data with it.
 
 Push notifications use Web Push/VAPID and are sent to every subscribed device
-when a route is planned or cancelled, a delivery is confirmed, or a vehicle
-first becomes due for maintenance. Users enable them from mobile navigation's
+when a route is planned or cancelled, a delivery is confirmed, or a vehicle or
+trailer first becomes due for maintenance. Users enable them from mobile navigation's
 More menu. Generate a VAPID keypair (for example with
 `npx web-push generate-vapid-keys --json`) and set `VAPID_PUBLIC_KEY`,
 `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` in the backend process environment.
@@ -227,12 +234,15 @@ by service date.
 
 ## AI operations assistant
 
-The dispatch app includes a floating assistant backed by the local Ollama server.
+The dispatch app includes a floating assistant backed by Ollama.
 The backend defaults to `http://localhost:11434` and model `beam:cloud`; override
 these with `OLLAMA_BASE_URL` and `OLLAMA_MODEL`. Chat history is temporary in
-the open browser session. The assistant reads current drivers, vehicles and
-maintenance status, trailers, freight, routes, and the current month's finance
-analysis. Finance is read-only and is derived from freight revenue and recorded
+the open browser session. The assistant answers general questions from the
+model's knowledge and has no web search or external tools. It attaches only
+the relevant operational data sections when the conversation appears to
+concern logistics operations; route geometry and detailed trailer service
+history are excluded.
+Finance is read-only and is derived from freight revenue and recorded
 maintenance costs.
 
 The assistant can propose supported create, update, delete, route-status,
@@ -241,9 +251,15 @@ the proposed operation. Backend validation and existing business rules still
 apply. For a new freight-and-route request, the assistant may propose both
 records together; if route planning fails after freight creation, it reports
 that the freight remains unassigned.
+For route requests, it selects compatible available drivers, vehicles, and
+trailers from live operations data. If required information is missing, it asks
+for the missing details and continues the plan from the conversation. Adding
+freight to the depot creates an unassigned freight record using the configured
+warehouse as its pickup location. Revenue can remain unpriced until recorded.
 
-`beam:cloud` is a cloud-backed Ollama model. Prompts and the operational
-snapshot supplied for each answer are sent to Ollama Cloud; do not use this
-configuration with sensitive data unless that sharing is approved. Select a
+`beam:cloud` is a cloud-backed Ollama model. Prompts are sent to Ollama Cloud;
+the live operational snapshot is sent only for logistics-related questions.
+Do not use this configuration with sensitive data unless that sharing is
+approved. Select a
 fully local model by setting `OLLAMA_MODEL` to its local Ollama tag. Configure
 the backend's Ollama URL to the host reachable from the backend process.

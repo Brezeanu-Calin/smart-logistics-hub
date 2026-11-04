@@ -173,6 +173,18 @@ tbody tr:hover { background: #1f2428; }
 .route-list { gap: 9px; padding: 10px; }
 .route-card { overflow: hidden; }
 .route-card-head { border-bottom-color: var(--line); }
+.route-detail-button { border: 0; padding: 0; background: transparent; cursor: pointer; }
+.route-detail-panel { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.driver-detail-dialog { width: min(680px, 100%); }
+.driver-detail-body { display: grid; gap: 14px; padding: 14px; }
+.driver-detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.driver-detail-grid > div { display: grid; gap: 5px; }
+.driver-detail-grid small, .driver-route-row small { color: var(--muted); font-size: 9px; }
+.driver-detail-grid strong { color: var(--text); font-size: 11px; overflow-wrap: anywhere; }
+.driver-detail-body h3 { margin: 0; color: var(--text); font-size: 12px; }
+.driver-route-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding: 10px 0; }
+.driver-route-row > div { display: grid; gap: 4px; }
+.driver-route-row strong { color: var(--text); font-size: 10px; }
 .route-number { color: var(--yellow); font-family: "JetBrains Mono", Consolas, monospace; }
 .small-button { min-height: 27px; border: 1px solid var(--yellow); border-radius: 0; color: var(--asphalt); background: var(--yellow); font-family: "JetBrains Mono", Consolas, monospace; font-size: 8px; text-transform: uppercase; }
 .icon-button { border: 1px solid var(--line); border-radius: 0; color: var(--text); background: #111416; }

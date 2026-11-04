@@ -6,6 +6,7 @@ import ro.logistics.smart_logistics.maintenance.dto.TrailerMaintenanceComponentR
 import ro.logistics.smart_logistics.maintenance.dto.TrailerMaintenanceOperationRequest;
 import ro.logistics.smart_logistics.maintenance.dto.TrailerMaintenanceRecordResponse;
 import ro.logistics.smart_logistics.maintenance.persistence.TrailerMaintenanceOperationRepository;
+import ro.logistics.smart_logistics.notification.application.OperationalNotification;
 import ro.logistics.smart_logistics.route.domain.RouteStatus;
 import ro.logistics.smart_logistics.route.persistence.RouteRepository;
 import ro.logistics.smart_logistics.trailer.application.TrailerNotFoundException;
@@ -13,6 +14,8 @@ import ro.logistics.smart_logistics.trailer.domain.Trailer;
 import ro.logistics.smart_logistics.trailer.domain.TrailerStatus;
 import ro.logistics.smart_logistics.trailer.persistence.TrailerRepository;
 
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +29,7 @@ import java.util.Map;
 @Transactional
 public class TrailerMaintenanceService {
     private static final int SERVICE_INTERVAL_MONTHS = 12;
+    private static final int AUTO_MAINTENANCE_THRESHOLD_PERCENT = 10;
     private static final List<RouteStatus> SCHEDULED_STATUSES = List.of(RouteStatus.PLANNED, RouteStatus.ACTIVE);
     private static final List<ComponentDefinition> COMPONENTS = List.of(
             new ComponentDefinition("brakes", "Brakes"),
@@ -37,15 +41,18 @@ public class TrailerMaintenanceService {
     private final TrailerMaintenanceOperationRepository operationRepository;
     private final TrailerRepository trailerRepository;
     private final RouteRepository routeRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public TrailerMaintenanceService(
             TrailerMaintenanceOperationRepository operationRepository,
             TrailerRepository trailerRepository,
-            RouteRepository routeRepository
+            RouteRepository routeRepository,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.operationRepository = operationRepository;
         this.trailerRepository = trailerRepository;
         this.routeRepository = routeRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional(readOnly = true)
@@ -81,6 +88,48 @@ public class TrailerMaintenanceService {
                 request.performedAt(),
                 request.costEur()
         ));
+        updateAutomaticMaintenanceState(trailer, OffsetDateTime.now());
+    }
+
+    public void completeMaintenance(Trailer trailer) {
+        if (trailer.getStatus() == TrailerStatus.IN_TRANSIT
+                || routeRepository.existsByTrailer_IdAndStatusIn(trailer.getId(), SCHEDULED_STATUSES)) {
+            throw new InvalidMaintenanceOperationException(
+                    "Maintenance cannot be completed while the trailer is assigned to a planned or active route."
+            );
+        }
+        OffsetDateTime completedAt = OffsetDateTime.now();
+        operationRepository.saveAll(COMPONENTS.stream()
+                .map(component -> new TrailerMaintenanceOperation(trailer, component.key(), completedAt, null))
+                .toList());
+        trailer.clearAutomaticMaintenance();
+    }
+
+    public void updateAutomaticMaintenanceState(Trailer trailer, OffsetDateTime now) {
+        boolean maintenanceWasDue = trailer.isMaintenanceAutoTriggered();
+        boolean maintenanceDue = componentResponses(trailer, operationsFor(trailer), now).stream()
+                .anyMatch(component -> component.healthPercent() != null
+                        && component.healthPercent() <= AUTO_MAINTENANCE_THRESHOLD_PERCENT);
+        if (maintenanceDue) {
+            trailer.markAutomaticMaintenance();
+        } else if (trailer.isMaintenanceAutoTriggered() && trailer.getStatus() != TrailerStatus.IN_TRANSIT) {
+            trailer.clearAutomaticMaintenance();
+        }
+        if (!maintenanceWasDue && trailer.isMaintenanceAutoTriggered()) {
+            eventPublisher.publishEvent(new OperationalNotification(
+                    "Trailer maintenance due",
+                    "Trailer " + trailer.getLicensePlate() + " needs maintenance.",
+                    "app"
+            ));
+        }
+    }
+
+    @Scheduled(fixedDelayString = "${maintenance.check-interval-ms:60000}")
+    public void checkDueMaintenance() {
+        OffsetDateTime now = OffsetDateTime.now();
+        for (Trailer trailer : trailerRepository.findAllForUpdate()) {
+            updateAutomaticMaintenanceState(trailer, now);
+        }
     }
 
     private List<TrailerMaintenanceOperation> operationsFor(Trailer trailer) {
@@ -104,7 +153,7 @@ public class TrailerMaintenanceService {
             if (latest == null) {
                 return new TrailerMaintenanceComponentResponse(
                         definition.key(), definition.label(), SERVICE_INTERVAL_MONTHS,
-                        null, null, null, null
+                        null, null, 0, 0
                 );
             }
             OffsetDateTime dueAt = latest.getPerformedAt().plusMonths(SERVICE_INTERVAL_MONTHS);

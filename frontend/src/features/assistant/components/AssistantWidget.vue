@@ -15,8 +15,54 @@ import api, {
 
 const emit = defineEmits<{ dataChanged: [] }>()
 const MAX_OPERATIONAL_CONTEXT_BYTES = 150_000
+const OPERATIONAL_TOPIC = /\b(?:haulmaster|logistics|operations?|dispatch)\b/i
+const ROUTE_REQUEST = /\b(?:ship|send|move|haul|transport|pick up)\b/i
+const CRUD_REQUEST = /\b(?:create|add|update|change|delete|remove)\b/i
+const OPERATIONAL_ENTITY = /\b(?:drivers?|vehicles?|trucks?|fleet|trailers?|freight|shipments?|goods|routes?|deliver(?:y|ies|ed)?|maintenance|finance|revenue|profit|clients?|cargo|metal|earnings?|income|costs?|margins?)\b/i
+const OPERATIONAL_INTENT = /\b(?:our|my|we|how many|which|who|show|list|status|available|in service|due|assigned|unassigned|current|currently|planned|active|overdue|create|add|update|change|delete|remove|record|assign|plan|deliver|set|mark|have)\b/i
 
 type ChatEntry = AssistantChatMessage & { action?: AssistantAction }
+
+function contextDomains(messages: ChatEntry[]) {
+  const recentUserMessages = messages
+    .filter((message) => message.role === 'user')
+    .slice(-3)
+    .map((message) => message.content)
+    .join('\n')
+  const isOperational = OPERATIONAL_TOPIC.test(recentUserMessages)
+    || ROUTE_REQUEST.test(recentUserMessages)
+    || CRUD_REQUEST.test(recentUserMessages)
+    || (OPERATIONAL_ENTITY.test(recentUserMessages) && OPERATIONAL_INTENT.test(recentUserMessages))
+  if (!isOperational) return null
+
+  const requested = {
+    drivers: /\bdrivers?\b/i.test(recentUserMessages),
+    vehicles: /\b(?:vehicles?|trucks?|fleet)\b/i.test(recentUserMessages),
+    trailers: /\btrailers?\b/i.test(recentUserMessages),
+    freight: /\b(?:freight|shipments?|goods|clients?|cargo|metal)\b/i.test(recentUserMessages) || ROUTE_REQUEST.test(recentUserMessages),
+    routes: /\b(?:routes?|deliver(?:y|ies|ed)?|dispatch)\b/i.test(recentUserMessages) || ROUTE_REQUEST.test(recentUserMessages),
+    maintenance: /\bmaintenance\b/i.test(recentUserMessages),
+    finance: /\b(?:finance|revenue|profit|earnings?|income|costs?|margins?)\b/i.test(recentUserMessages),
+    includeMargins: /\b(?:margins?|profitability)\b/i.test(recentUserMessages),
+  }
+  if (requested.routes) {
+    requested.drivers = true
+    requested.vehicles = true
+    requested.trailers = true
+    requested.freight = true
+  }
+  if (requested.maintenance) {
+    requested.vehicles = true
+    requested.trailers = true
+  }
+  if (!Object.values(requested).some(Boolean)) {
+    return {
+      drivers: true, vehicles: true, trailers: true, freight: true, routes: true,
+      maintenance: true, finance: true, includeMargins: requested.includeMargins,
+    }
+  }
+  return requested
+}
 
 const isOpen = ref(false)
 const busy = ref(false)
@@ -25,7 +71,7 @@ const error = ref('')
 const config = ref<AssistantConfig | null>(null)
 const messages = ref<ChatEntry[]>([{
   role: 'assistant',
-  content: 'Ask about live logistics operations, or describe a change. I will show a proposal for your confirmation before writing anything.',
+  content: 'Ask a general question or ask about live logistics operations. For changes, I will show a proposal for your confirmation before writing anything.',
 }])
 const pendingAction = ref<AssistantAction | null>(null)
 const messageLog = ref<HTMLElement | null>(null)
@@ -49,30 +95,52 @@ function localDate(date: Date) {
   return adjusted.toISOString().slice(0, 10)
 }
 
-async function loadContext() {
+async function loadContext(domains: NonNullable<ReturnType<typeof contextDomains>>) {
   const today = new Date()
   const from = localDate(new Date(today.getFullYear(), today.getMonth(), 1))
   const to = localDate(today)
-  const [driversResponse, vehiclesResponse, trailersResponse, goodsResponse, routesResponse, financeResponse] =
-    await Promise.all([
-      api.get<Driver[]>('/drivers'),
-      api.get<Vehicle[]>('/vehicles'),
-      api.get<Trailer[]>('/trailers'),
-      api.get<Goods[]>('/goods'),
-      api.get<Route[]>('/routes'),
-      api.get<FinanceResponse>('/finance', { params: { from, to } }),
-    ])
+  const [driversResponse, vehiclesResponse, trailersResponse, goodsResponse, routesResponse, financeResponse] = await Promise.all([
+    domains.drivers ? api.get<Driver[]>('/drivers') : Promise.resolve({ data: [] as Driver[] }),
+    domains.vehicles ? api.get<Vehicle[]>('/vehicles') : Promise.resolve({ data: [] as Vehicle[] }),
+    domains.trailers ? api.get<Trailer[]>('/trailers') : Promise.resolve({ data: [] as Trailer[] }),
+    domains.freight ? api.get<Goods[]>('/goods') : Promise.resolve({ data: [] as Goods[] }),
+    domains.routes ? api.get<Route[]>('/routes') : Promise.resolve({ data: [] as Route[] }),
+    domains.finance
+      ? api.get<FinanceResponse>('/finance', { params: { from, to } })
+      : Promise.resolve({ data: null as FinanceResponse | null }),
+  ])
+  const warehouseResponse = domains.freight
+    ? await api.get<{ warehouseCity: string }>('/config')
+    : null
 
-  return {
-    drivers: driversResponse.data.map(({ id, name, licenseCategories, status }) =>
-      ({ id, name, licenseCategories, status })),
-    vehicles: vehiclesResponse.data,
-    trailers: trailersResponse.data,
-    freight: goodsResponse.data,
-    routes: routesResponse.data,
-    finance: financeResponse.data,
-    financePeriod: { from, to },
+  const context: Record<string, unknown> = {}
+  if (domains.drivers) context.drivers = driversResponse.data.map(({ id, name, email, licenseCategories, status }) =>
+    ({ id, name, email, licenseCategories, status }))
+  if (domains.vehicles) context.vehicles = vehiclesResponse.data.map(({ maintenanceComponents, ...vehicle }) => ({
+    ...vehicle,
+    maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur }) =>
+      ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur })),
+  }))
+  if (domains.trailers) context.trailers = trailersResponse.data.map(({ maintenanceHistory: _maintenanceHistory, maintenanceComponents, ...trailer }) => ({
+    ...trailer,
+    maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur }) =>
+      ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur })),
+  }))
+  if (domains.freight) context.freight = goodsResponse.data
+  if (warehouseResponse) context.warehouseCity = warehouseResponse.data.warehouseCity
+  if (domains.routes) context.routes = routesResponse.data.map(({ geometry: _geometry, stops, ...route }) => ({
+    ...route,
+    stops: stops.map(({ latitude: _latitude, longitude: _longitude, ...stop }) => stop),
+  }))
+  if (domains.finance && financeResponse.data) {
+    const { freightMargins, ...financeSummary } = financeResponse.data
+    context.finance = {
+      ...financeSummary,
+      ...(domains.includeMargins ? { freightMargins } : {}),
+    }
+    context.financePeriod = { from, to }
   }
+  return context
 }
 
 async function sendMessage() {
@@ -84,10 +152,11 @@ async function sendMessage() {
   messages.value.push({ role: 'user', content })
   busy.value = true
   try {
-    const context = await loadContext()
+    const domains = contextDomains(messages.value)
+    const context = domains ? await loadContext(domains) : {}
     if (context === null || typeof context !== 'object' || Array.isArray(context)
       || new TextEncoder().encode(JSON.stringify(context)).byteLength > MAX_OPERATIONAL_CONTEXT_BYTES) {
-      throw new Error('Operational context must be a JSON object no larger than 150 KB.')
+      throw new Error('The live operations snapshot is too large to send. Narrow the question or reduce the operational data set.')
     }
     const history = messages.value
       .filter((message) => message.role === 'user' || message.role === 'assistant')

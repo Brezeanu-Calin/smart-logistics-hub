@@ -28,17 +28,6 @@ const RouteMap = defineAsyncComponent(() => import('../components/RouteMap.vue')
 const FinanceView = defineAsyncComponent(() => import('./FinanceView.vue'))
 
 type Section = 'overview' | 'routes' | 'freight' | 'drivers' | 'fleet' | 'maintenance' | 'finance'
-type DemoContract = {
-  reference: string
-  client: string
-  category: 'HEAVY HAUL' | 'GENERAL' | 'REFRIGERATED' | 'ADR'
-  pickup: string
-  delivery: string
-  departure: string
-  departureSort: number
-  distanceKm: number
-  revenueEur: number
-}
 type MaintenanceEntry = {
   performedAtLocal: string
   odometerKm: string
@@ -127,10 +116,9 @@ const routePlannerOpen = ref(false)
 const expandedRouteMaps = ref(new Set<number>())
 const hiddenLiveRouteMaps = ref(new Set<number>())
 const loadingRouteMaps = ref(new Set<number>())
-const selectedVehicleId = ref<number | null>(null)
 const selectedMaintenanceVehicleId = ref<number | null>(null)
-const contractCategory = ref('ALL')
-const contractSort = ref<'RATE' | 'REVENUE' | 'DEPARTURE'>('RATE')
+const selectedDriverId = ref<number | null>(null)
+const expandedLiveRouteDetails = ref(new Set<number>())
 const fleetSort = ref<'CLASS' | 'MILEAGE' | 'STATUS'>('CLASS')
 const driverSearch = ref('')
 const freightSearch = ref('')
@@ -146,14 +134,9 @@ const freightPage = ref(1)
 const routePage = ref(1)
 const maintenancePage = ref(1)
 let snackbarTimer: number | undefined
-const demoContracts: DemoContract[] = [
-  { reference: 'HM-2048', client: 'NorthSea Energy', category: 'HEAVY HAUL', pickup: 'Rotterdam', delivery: 'Munich', departure: 'Today · 18:00', departureSort: 1, distanceKm: 824, revenueEur: 7420 },
-  { reference: 'HM-2052', client: 'Bavaria Components', category: 'GENERAL', pickup: 'Utrecht', delivery: 'Stuttgart', departure: 'Tomorrow · 06:30', departureSort: 2, distanceKm: 637, revenueEur: 2860 },
-  { reference: 'HM-2057', client: 'Frostline Foods', category: 'REFRIGERATED', pickup: 'Eindhoven', delivery: 'Frankfurt', departure: 'Tomorrow · 09:00', departureSort: 3, distanceKm: 392, revenueEur: 2050 },
-  { reference: 'HM-2061', client: 'RheinChem GmbH', category: 'ADR', pickup: 'Antwerp', delivery: 'Cologne', departure: '18 Oct · 13:00', departureSort: 4, distanceKm: 214, revenueEur: 1760 },
-]
 const activeRoutes = computed(() => routes.value.filter((route) => route.status === 'ACTIVE').length)
 const liveRoutes = computed(() => routes.value.filter((route) => route.status === 'ACTIVE'))
+const activeVehicles = computed(() => vehicles.value.filter((vehicle) => vehicle.status === 'IN_TRANSIT').length)
 const availableDrivers = computed(() => drivers.value.filter((driver) =>
   driver.status === 'AVAILABLE' && !isDriverScheduled(driver.id),
 ).length)
@@ -161,11 +144,15 @@ const availableVehicles = computed(() => vehicles.value.filter((vehicle) =>
   vehicle.status === 'AVAILABLE' && !vehicle.maintenanceAutoTriggered && !isVehicleScheduled(vehicle.id),
 ).length)
 const maintenanceVehicles = computed(() => vehicles.value.filter((vehicle) => vehicle.status === 'MAINTENANCE'))
-const selectedVehicle = computed(() =>
-  vehicles.value.find((vehicle) => vehicle.id === selectedVehicleId.value) ?? vehicles.value[0] ?? null,
-)
+const maintenanceTrailers = computed(() => trailers.value.filter((trailer) => trailer.status === 'MAINTENANCE'))
 const selectedMaintenanceVehicle = computed(() =>
   vehicles.value.find((vehicle) => vehicle.id === selectedMaintenanceVehicleId.value) ?? null,
+)
+const selectedDriver = computed(() =>
+  drivers.value.find((driver) => driver.id === selectedDriverId.value) ?? null,
+)
+const selectedDriverRoutes = computed(() =>
+  selectedDriver.value ? routes.value.filter((route) => route.driverId === selectedDriver.value?.id) : [],
 )
 const filteredDrivers = computed(() => drivers.value.filter((driver) =>
   `${driver.name} ${driver.email} ${driver.licenseCategories.join(' ')} ${driver.status}`
@@ -240,6 +227,7 @@ const compatibleRouteTrailers = computed(() => {
   const requiredVolume = specializedCargo ? totalVolume : Math.max(0, totalVolume - vehicle.maxVolumeM3)
   return trailers.value.filter((trailer) =>
     trailer.status === 'AVAILABLE'
+    && !trailer.maintenanceAutoTriggered
     && trailer.compatibleVehicleType === vehicle.vehicleType
     && trailer.maxWeightCapacityKg >= requiredWeight
     && trailer.maxVolumeM3 >= requiredVolume
@@ -251,16 +239,6 @@ const compatibleRouteTrailers = computed(() => {
     ),
   )
 })
-const visibleContracts = computed(() => {
-  const filtered = demoContracts.filter((contract) =>
-    contractCategory.value === 'ALL' || contract.category === contractCategory.value,
-  )
-  return filtered.sort((first, second) => {
-    if (contractSort.value === 'REVENUE') return second.revenueEur - first.revenueEur
-    if (contractSort.value === 'DEPARTURE') return first.departureSort - second.departureSort
-    return (second.revenueEur / second.distanceKm) - (first.revenueEur / first.distanceKm)
-  })
-})
 const unassignedGoods = computed(() => goods.value.filter((item) =>
   item.status === 'UNASSIGNED'
   || (editingRouteId.value !== null
@@ -271,7 +249,7 @@ const screenTitle = computed(() => ({
   routes: 'Route Planner & Dispatch',
   freight: 'Freight Jobs & Loads',
   drivers: 'Drivers',
-  fleet: 'Fleet Operations & Telemetry',
+  fleet: 'Fleet Operations',
   maintenance: 'Maintenance & Diagnostics',
   finance: 'Financial Analysis',
 })[section.value])
@@ -611,16 +589,20 @@ function setMaintenanceCost(vehicle: Vehicle, component: VehicleMaintenanceCompo
 }
 
 function assignedDriver(vehicleId: number) {
-  const route = routes.value.find((item) =>
+  const route = assignedDriverRoute(vehicleId)
+  if (!route) return '—'
+  const driverState = route.status === 'ACTIVE' ? 'ON ROUTE' : route.status === 'PLANNED' ? 'PLANNED' : 'RETURNING'
+  return `${route.driverName} · ${driverState}`
+}
+
+function assignedDriverRoute(vehicleId: number) {
+  return routes.value.find((item) =>
     item.vehicleId === vehicleId && (
       item.status === 'PLANNED'
       || item.status === 'ACTIVE'
       || ((item.status === 'COMPLETED' || item.status === 'CANCELLED') && item.estimatedReturnTime !== null && !item.returnedAt)
     ),
   )
-  if (!route) return '—'
-  const driverState = route.status === 'ACTIVE' ? 'ON ROUTE' : route.status === 'PLANNED' ? 'PLANNED' : 'RETURNING'
-  return `${route.driverName} · ${driverState}`
 }
 
 function clearMessages() {
@@ -708,9 +690,6 @@ async function loadData() {
   drivers.value = driverResponse.data
   vehicles.value = vehicleResponse.data
   syncMaintenanceEntries()
-  if (!vehicles.value.some((vehicle) => vehicle.id === selectedVehicleId.value)) {
-    selectedVehicleId.value = vehicles.value[0]?.id ?? null
-  }
   goods.value = goodsResponse.data
   routes.value = routeResponse.data
   trailers.value = trailerResponse.data
@@ -835,7 +814,6 @@ function resetVehicleForm() {
 
 function editVehicle(vehicle: Vehicle) {
   editingVehicleId.value = vehicle.id
-  selectedVehicleId.value = vehicle.id
   Object.assign(vehicleForm, {
     licensePlate: vehicle.licensePlate,
     vehicleType: vehicle.vehicleType,
@@ -904,6 +882,8 @@ async function deleteTrailer(trailer: Trailer) {
 }
 
 async function updateTrailerStatus(trailer: Trailer, status: 'AVAILABLE' | 'MAINTENANCE') {
+  if (status === 'AVAILABLE' && trailer.status === 'MAINTENANCE'
+    && !window.confirm(`Mark ${trailer.licensePlate} available? This records completed service for all tracked components; individual service costs will remain unrecorded.`)) return
   await mutate(() => api.patch(`/trailers/${trailer.id}/status`, { status }), 'Trailer status updated.')
 }
 
@@ -1012,10 +992,6 @@ async function saveGoods() {
   clearMessages()
   const revenueText = String(goodsForm.revenueEur ?? '').trim()
   const revenueEur = revenueText ? Number(revenueText) : null
-  if (revenueEur === null) {
-    error.value = 'Freight revenue is required.'
-    return
-  }
   if (goodsForm.pickupCity.trim().toLocaleLowerCase() === goodsForm.deliveryCity.trim().toLocaleLowerCase()) {
     error.value = 'Pickup and delivery cities must be different.'
     return
@@ -1058,6 +1034,31 @@ function toggleLiveRouteMap(routeId: number) {
   if (hidden.has(routeId)) hidden.delete(routeId)
   else hidden.add(routeId)
   hiddenLiveRouteMaps.value = hidden
+}
+
+function toggleLiveRouteDetails(routeId: number) {
+  const expanded = new Set(expandedLiveRouteDetails.value)
+  if (expanded.has(routeId)) expanded.delete(routeId)
+  else expanded.add(routeId)
+  expandedLiveRouteDetails.value = expanded
+}
+
+function openDriverDetails(driverId: number) {
+  if (drivers.value.some((driver) => driver.id === driverId)) selectedDriverId.value = driverId
+}
+
+function openVehicleDetails(vehicle: Vehicle) {
+  const route = assignedDriverRoute(vehicle.id)
+  if (route) openDriverDetails(route.driverId)
+  else {
+    selectedMaintenanceVehicleId.value = vehicle.id
+    section.value = 'maintenance'
+  }
+}
+
+function openAssignedDriver(vehicleId: number) {
+  const route = assignedDriverRoute(vehicleId)
+  if (route) openDriverDetails(route.driverId)
 }
 
 async function createRoute() {
@@ -1189,6 +1190,12 @@ function isVehicleScheduled(vehicleId: number) {
   )
 }
 
+function isTrailerScheduled(trailerId: number) {
+  return routes.value.some((route) =>
+    route.trailerId === trailerId && (route.status === 'PLANNED' || route.status === 'ACTIVE'),
+  )
+}
+
 function displayDate(value: string | null) {
   return value ? new Date(value).toLocaleString() : '—'
 }
@@ -1216,7 +1223,6 @@ routeForm.departureLocal = defaultDepartureTime()
       <nav class="side-nav" aria-label="Main navigation">
         <button :class="{ selected: section === 'overview' }" @click="section = 'overview'"><span>▦</span> Overview</button>
         <button :class="{ selected: section === 'routes' }" @click="section = 'routes'"><span>↗</span> Route Planner <b>{{ activeRoutes }}</b></button>
-        <button :class="{ selected: section === 'fleet' }" @click="section = 'fleet'"><span>▰</span> Fleet Ops</button>
         <button :class="{ selected: section === 'freight' }" @click="section = 'freight'"><span>▣</span> Freight Jobs</button>
         <button :class="{ selected: section === 'maintenance' }" @click="section = 'maintenance'"><span>⚒</span> Maintenance <b>{{ maintenanceVehicles.length }}</b></button>
         <button :class="{ selected: section === 'drivers' }" @click="section = 'drivers'"><span>♙</span> Drivers</button>
@@ -1278,7 +1284,11 @@ routeForm.departureLocal = defaultDepartureTime()
             <div v-if="!liveRoutes.length" class="empty-state"><span>↗</span><strong>No active routes</strong><p>Start a planned route to see its actual road geometry and simulated vehicle position here.</p></div>
             <div v-else class="route-list">
               <article v-for="route in liveRoutes" :key="route.id" class="route-card">
-                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill active">EN ROUTE</span></div><div class="route-actions"><span class="route-number">{{ route.vehicleLicensePlate }} · {{ route.driverName }}</span><button class="text-button" type="button" :aria-expanded="!hiddenLiveRouteMaps.has(route.id)" @click="toggleLiveRouteMap(route.id)">{{ hiddenLiveRouteMaps.has(route.id) ? 'Show map' : 'Hide map' }}</button></div></div>
+                <div class="route-card-head"><div><button class="route-number route-detail-button" type="button" :aria-expanded="expandedLiveRouteDetails.has(route.id)" @click="toggleLiveRouteDetails(route.id)">ROUTE #{{ route.id }}</button><span class="status-pill active">EN ROUTE</span></div><div class="route-actions"><button class="text-button" type="button" @click="openDriverDetails(route.driverId)">{{ route.vehicleLicensePlate }} · {{ route.driverName }}</button><button class="text-button" type="button" :aria-expanded="!hiddenLiveRouteMaps.has(route.id)" @click="toggleLiveRouteMap(route.id)">{{ hiddenLiveRouteMaps.has(route.id) ? 'Show map' : 'Hide map' }}</button></div></div>
+                <div v-if="expandedLiveRouteDetails.has(route.id)" class="route-detail-panel">
+                  <div class="route-summary"><div><small>DRIVER</small><button class="text-button" @click="openDriverDetails(route.driverId)">{{ route.driverName }}</button></div><div><small>VEHICLE</small><strong>{{ route.vehicleLicensePlate }}<template v-if="route.trailerLicensePlate"> + {{ route.trailerLicensePlate }}</template></strong></div><div><small>DEPARTURE</small><strong>{{ displayDate(route.departureTime) }}</strong></div><div><small>EST. RETURN</small><strong>{{ displayDate(route.estimatedReturnTime) }}</strong></div></div>
+                  <ol class="stop-list"><li v-for="stop in route.stops" :key="`${stop.goodsId}-${stop.type}`"><span class="stop-marker" :class="stop.type.toLowerCase()"></span><span><small>{{ stop.type }} · {{ stop.trackingCode }}</small><strong>{{ stop.city }}</strong></span></li></ol>
+                </div>
                 <RouteMap
                   v-if="!hiddenLiveRouteMaps.has(route.id)"
                   :route-id="route.id"
@@ -1316,7 +1326,7 @@ routeForm.departureLocal = defaultDepartureTime()
             <div v-else class="route-list">
               <article v-for="route in paginatedRoutes" :key="route.id" class="route-card">
                 <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></div><div class="route-actions"><button v-if="route.status !== 'ACTIVE'" class="text-button" :disabled="loadingRouteMaps.has(route.id)" @click="toggleRouteMap(route)">{{ loadingRouteMaps.has(route.id) ? 'Calculating route…' : expandedRouteMaps.has(route.id) ? 'Hide map' : 'Show map' }}</button><button v-if="route.status === 'PLANNED'" class="text-button" :disabled="busy" @click="editPlannedRoute(route)">Edit route</button><button v-if="route.status === 'PLANNED'" class="small-button" :disabled="busy" @click="setRouteStatus(route, 'ACTIVE')">Start route</button><button v-if="route.status === 'PLANNED' || (route.status === 'CANCELLED' && (!route.estimatedReturnTime || route.returnedAt))" class="icon-button danger" :disabled="busy" aria-label="Delete route" @click="deleteRoute(route)">⌫</button></div></div>
-                <div class="route-summary"><div><small>DRIVER</small><strong>{{ route.driverName }}</strong></div><div><small>VEHICLE</small><strong>{{ route.vehicleLicensePlate }}<template v-if="route.trailerLicensePlate"> + {{ route.trailerLicensePlate }}</template></strong></div><div><small>DEPARTURE</small><strong>{{ displayDate(route.departureTime) }}</strong></div><div><small>EST. AT DEPOT</small><strong>{{ displayDate(route.estimatedReturnTime) }}</strong></div></div>
+                <div class="route-summary"><div><small>DRIVER</small><button class="text-button" @click="openDriverDetails(route.driverId)">{{ route.driverName }}</button></div><div><small>VEHICLE</small><button class="text-button" @click="openDriverDetails(route.driverId)">{{ route.vehicleLicensePlate }}<template v-if="route.trailerLicensePlate"> + {{ route.trailerLicensePlate }}</template></button></div><div><small>DEPARTURE</small><strong>{{ displayDate(route.departureTime) }}</strong></div><div><small>EST. AT DEPOT</small><strong>{{ displayDate(route.estimatedReturnTime) }}</strong></div></div>
                 <div class="route-metrics"><span>↔ {{ (route.distanceMeters / 1000).toFixed(1) }} km total distance</span><span>◷ {{ displayDuration(route.drivingDurationSeconds) }} driving</span><span v-if="route.returnedAt">✓ Returned {{ displayDate(route.returnedAt) }}</span></div>
                 <RouteMap
                   v-if="expandedRouteMaps.has(route.id) && route.status !== 'ACTIVE'"
@@ -1337,22 +1347,14 @@ routeForm.departureLocal = defaultDepartureTime()
         </template>
 
         <template v-else-if="section === 'freight'">
-          <div class="page-heading"><div><p class="eyebrow">FREIGHT JOBS / LOADS</p><h1>Freight Jobs &amp; Loads</h1><p class="subtitle">Warehouse: {{ warehouseCity }} · Manage live freight records and route assignments.</p></div><span class="demo-flag">CONTRACT BOARD · DEMO DATA</span></div>
-          <section class="panel">
-            <div class="panel-heading"><div><h2>Freight market board</h2><p>Sample opportunities · not bookable · values are illustrative</p></div><div class="market-controls"><select v-model="contractCategory" aria-label="Filter contracts by category"><option value="ALL">All cargo</option><option value="HEAVY HAUL">Heavy haul</option><option value="GENERAL">General</option><option value="REFRIGERATED">Refrigerated</option><option value="ADR">ADR</option></select><select v-model="contractSort" aria-label="Sort contracts"><option value="RATE">Sort: €/km</option><option value="REVENUE">Sort: revenue</option><option value="DEPARTURE">Sort: departure</option></select></div></div>
-            <div class="table-wrap"><table><thead><tr><th>CONTRACT</th><th>CARGO</th><th>LANE</th><th>DEPARTURE</th><th>DISTANCE</th><th>REVENUE</th><th>RATE</th></tr></thead><tbody><tr v-for="contract in visibleContracts" :key="contract.reference"><td><strong>{{ contract.reference }}</strong><small>{{ contract.client }}</small></td><td><span class="status-pill warning">{{ contract.category }}</span></td><td>{{ contract.pickup }} → {{ contract.delivery }}</td><td>{{ contract.departure }}</td><td>{{ contract.distanceKm.toLocaleString() }} KM</td><td>€ {{ contract.revenueEur.toLocaleString() }}</td><td class="rate-cell">€ {{ (contract.revenueEur / contract.distanceKm).toFixed(2) }}</td></tr></tbody></table></div>
-          </section>
-          <section class="panel envelope-panel">
-            <div class="panel-heading"><div><h2>Load envelope inspector</h2><p>Sample cargo profile · compatibility and route checks are illustrative only</p></div><span class="demo-flag">DEMO LOAD</span></div>
-            <div class="envelope-grid"><div class="cargo-envelope"><div class="cargo-outline"><span>OVERSIZE LOAD</span><strong>TRANSFORMER</strong><small>54,000 KG · 8.4 × 3.6 × 4.1 M</small></div><div class="envelope-dimensions"><span>↔ 8.4 M</span><span>↕ 4.1 M</span></div></div><div class="envelope-data"><div><small>ELIGIBLE TRACTOR</small><strong>Scania R730 8×4 <span>vs.</span> Actros SLT</strong></div><div><small>ESTIMATED NET MARGIN</small><strong class="good-text">€ 1,284 · 17.3%</strong></div><div><small>COMPLIANCE CHECKLIST</small><strong>✓ Axle load · ✓ Route clearance · ! Permit review <em>DEMO</em></strong></div></div></div>
-          </section>
+          <div class="page-heading"><div><p class="eyebrow">FREIGHT JOBS / LOADS</p><h1>Freight Jobs &amp; Loads</h1><p class="subtitle">Warehouse: {{ warehouseCity }} · Manage live freight records and route assignments.</p></div></div>
           <section class="panel form-panel">
             <div class="panel-heading"><div><h2>{{ editingGoodsId === null ? 'Add freight' : 'Edit freight' }}</h2><p>Tracking codes are generated automatically.</p></div><button v-if="editingGoodsId !== null" class="text-button" @click="resetGoodsForm">Discard changes</button></div>
             <form class="form-grid two-column" @submit.prevent="saveGoods">
               <label>Client name<input v-model.trim="goodsForm.clientName" maxlength="150" required></label>
               <label>Freight type<select v-model="goodsForm.goodsType"><option value="GENERAL">General cargo</option><option value="REFRIGERATED">Refrigerated</option><option value="HAZARDOUS">Hazardous</option><option value="OVERSIZED">Oversized / heavy haul</option><option value="BULK">Dry bulk</option><option value="LIQUID">Liquid</option><option value="CONTAINERIZED">Containerized</option><option value="VEHICLES">Vehicles</option><option value="LIVESTOCK">Livestock</option></select></label>
               <label>Weight (kg)<input v-model.number="goodsForm.weightKg" type="number" min="0.01" step="0.01" required></label>
-              <label>Freight revenue (EUR)<input v-model.number="goodsForm.revenueEur" type="number" min="0" max="9999999999.99" step="0.01" required></label>
+              <label>Freight revenue (EUR, optional)<input v-model.number="goodsForm.revenueEur" type="number" min="0" max="9999999999.99" step="0.01"></label>
               <label>Volume (m³)<input v-model.number="goodsForm.volumeM3" type="number" min="0.01" step="0.01" required></label>
               <label class="full-width">Pickup city<input v-model.trim="goodsForm.pickupCity" :placeholder="warehouseCity" maxlength="500" required></label>
               <label class="full-width">Delivery city<input v-model.trim="goodsForm.deliveryCity" maxlength="500" required></label>
@@ -1378,30 +1380,19 @@ routeForm.departureLocal = defaultDepartureTime()
             <PaginationControl v-if="filteredDrivers.length > pageSize" v-model:current-page="driverPage" v-model:page-size="pageSize" :page-count="pageCount(filteredDrivers.length)" :total="filteredDrivers.length" />
             <div v-if="!drivers.length" class="empty-state"><strong>No drivers registered</strong><p>Add drivers to make them available for route planning.</p></div>
             <div v-else-if="!filteredDrivers.length" class="empty-state"><strong>No matching drivers</strong><p>Try a different name, email, license, or status.</p></div>
-            <div v-else class="table-wrap"><table><thead><tr><th>DRIVER</th><th>LICENSES</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="driver in paginatedDrivers" :key="driver.id"><td><strong>{{ driver.name }}</strong><small>{{ driver.email }}</small></td><td><span v-for="license in driver.licenseCategories" :key="license" class="license-chip">{{ license }}</span></td><td><span class="status-pill" :class="driver.status.toLowerCase()">{{ formatStatus(driver.status) }}</span></td><td><div class="row-actions"><button v-if="!isDriverScheduled(driver.id) && driver.status !== 'IN_TRANSIT' && driver.status !== 'RETURNING'" class="text-button" @click="editDriver(driver)">Edit</button><select v-if="!isDriverScheduled(driver.id) && (driver.status === 'AVAILABLE' || driver.status === 'ON_LEAVE')" class="compact-select" :value="driver.status" aria-label="Driver availability" @change="updateDriverStatus(driver, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'ON_LEAVE')"><option value="AVAILABLE">Available</option><option value="ON_LEAVE">On leave</option></select><button class="text-button danger-text" :disabled="driver.status === 'IN_TRANSIT' || driver.status === 'RETURNING' || hasDriverRoute(driver.id)" :title="hasDriverRoute(driver.id) ? 'Route history references this driver' : ''" @click="deleteDriver(driver)">Delete</button></div></td></tr></tbody></table></div>
+            <div v-else class="table-wrap"><table><thead><tr><th>DRIVER</th><th>LICENSES</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="driver in paginatedDrivers" :key="driver.id"><td><button class="text-button manifest-select" @click="openDriverDetails(driver.id)">{{ driver.name }}</button><small>{{ driver.email }}</small></td><td><span v-for="license in driver.licenseCategories" :key="license" class="license-chip">{{ license }}</span></td><td><span class="status-pill" :class="driver.status.toLowerCase()">{{ formatStatus(driver.status) }}</span></td><td><div class="row-actions"><button class="text-button" @click="openDriverDetails(driver.id)">Details</button><button v-if="!isDriverScheduled(driver.id) && driver.status !== 'IN_TRANSIT' && driver.status !== 'RETURNING'" class="text-button" @click="editDriver(driver)">Edit</button><select v-if="!isDriverScheduled(driver.id) && (driver.status === 'AVAILABLE' || driver.status === 'ON_LEAVE')" class="compact-select" :value="driver.status" aria-label="Driver availability" @change="updateDriverStatus(driver, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'ON_LEAVE')"><option value="AVAILABLE">Available</option><option value="ON_LEAVE">On leave</option></select><button class="text-button danger-text" :disabled="driver.status === 'IN_TRANSIT' || driver.status === 'RETURNING' || hasDriverRoute(driver.id)" :title="hasDriverRoute(driver.id) ? 'Route history references this driver' : ''" @click="deleteDriver(driver)">Delete</button></div></td></tr></tbody></table></div>
             <PaginationControl v-if="filteredDrivers.length > pageSize" v-model:current-page="driverPage" v-model:page-size="pageSize" :page-count="pageCount(filteredDrivers.length)" :total="filteredDrivers.length" />
           </section>
         </template>
 
         <template v-else-if="section === 'fleet'">
-          <div class="page-heading"><div><p class="eyebrow">FLEET OPERATIONS / TELEMETRY</p><h1>Fleet Operations &amp; Telemetry</h1><p class="subtitle">Live fleet records with a clearly marked sample telemetry console.</p></div><span class="demo-flag">TELEMETRY · DEMO FEED</span></div>
-          <div class="fleet-command-grid">
-            <article class="command-metric"><small>UNITS ON ROUTE</small><strong>84<span> / 96</span></strong><em>Illustrative fleet snapshot</em></article>
-            <article class="command-metric"><small>AVG. FLEET SPEED</small><strong>68<span> KM/H</span></strong><em>Sample telemetry · not live</em></article>
-            <article class="command-metric"><small>CUMULATIVE DIESEL</small><strong>12,480<span> L</span></strong><em>Sample telemetry · today</em></article>
-            <article class="command-metric command-alert"><small>ROAD HAZARDS</small><strong>03<span> OPEN</span></strong><em>2 route cautions · 1 weather</em></article>
+          <div class="page-heading"><div><p class="eyebrow">FLEET OPERATIONS</p><h1>Fleet Operations</h1><p class="subtitle">Fleet availability and driver assignments from current dispatch records.</p></div></div>
+          <div class="stat-grid">
+            <article class="stat-card"><div class="stat-top"><span>Registered vehicles</span><span class="stat-icon blue">▰</span></div><strong>{{ vehicles.length }}</strong><small>Fleet capacity</small></article>
+            <article class="stat-card"><div class="stat-top"><span>Vehicles on route</span><span class="stat-icon purple">↗</span></div><strong>{{ activeVehicles }}</strong><small>Currently dispatched</small></article>
+            <article class="stat-card"><div class="stat-top"><span>Trailers</span><span class="stat-icon orange">▱</span></div><strong>{{ trailers.length }}</strong><small>Registered equipment</small></article>
+            <article class="stat-card"><div class="stat-top"><span>In maintenance</span><span class="stat-icon green">⚒</span></div><strong>{{ maintenanceVehicles.length }}</strong><small>Vehicles held for service</small></article>
           </div>
-          <section class="telemetry-grid">
-            <article class="panel telemetry-panel">
-              <div class="panel-heading"><div><h2>Unit inspection · sample feed</h2><p>{{ selectedVehicle ? `${selectedVehicle.licensePlate} · ${selectedVehicle.make} ${selectedVehicle.model}` : 'No registered unit selected' }}</p></div><div class="market-controls"><select v-if="vehicles.length" v-model.number="selectedVehicleId" aria-label="Select vehicle for inspection"><option v-for="vehicle in vehicles" :key="vehicle.id" :value="vehicle.id">{{ vehicle.licensePlate }}</option></select><span class="demo-flag">DEMO</span></div></div>
-              <div v-if="selectedVehicle" class="engine-console">
-                <div class="engine-gauges"><div class="gauge"><span>ENGINE SPEED</span><strong>1,480 <i>RPM</i></strong><div class="gauge-track"><b style="width: 48%"></b></div></div><div class="gauge"><span>TURBO BOOST</span><strong>1.8 <i>BAR</i></strong><div class="gauge-track"><b style="width: 62%"></b></div></div><div class="gauge"><span>OIL TEMP</span><strong>92 <i>°C</i></strong><div class="gauge-track"><b style="width: 58%"></b></div></div><div class="gauge"><span>COOLANT</span><strong>84 <i>°C</i></strong><div class="gauge-track"><b style="width: 53%"></b></div></div></div>
-                <div class="inspection-foot"><span>ECO SCORE <strong>87 / 100</strong></span><span>GEAR <strong>{{ selectedVehicle ? `${(selectedVehicle.id % 12) + 1}A · DEMO` : '—' }}</strong></span><span>CB / DISPATCH <strong>CH 12 · SAMPLE</strong></span><button class="secondary-button" @click="section = 'maintenance'">Open diagnostics</button></div>
-              </div>
-              <div v-else class="empty-state"><strong>No vehicles available</strong><p>Add a vehicle to populate fleet operations.</p></div>
-            </article>
-            <aside class="panel hazard-feed"><div class="panel-heading"><div><h2>Road hazard attention</h2><p>Illustrative operational feed</p></div><span class="status-pill warning">DEMO</span></div><div class="feed-item critical-feed"><b>!</b><span><strong>Kassel Hills · steep incline</strong><small>Heavy-haul corridor · route scenario</small></span><time>08:42</time></div><div class="feed-item warning-feed"><b>!</b><span><strong>Low bridge bypass · A7</strong><small>Clearance review recommended</small></span><time>08:15</time></div><div class="feed-item"><b>i</b><span><strong>Wet road advisory · Bavaria</strong><small>Weather sample · no live feed</small></span><time>07:58</time></div></aside>
-          </section>
           <section class="panel form-panel"><div class="panel-heading"><div><h2>{{ editingVehicleId === null ? 'Add a vehicle' : 'Edit vehicle' }}</h2><p>Fleet capacity is checked automatically when planning routes.</p></div><button v-if="editingVehicleId !== null" class="text-button" @click="resetVehicleForm">Discard changes</button></div>
             <form class="form-grid three-column" @submit.prevent="saveVehicle"><label>License plate<input v-model.trim="vehicleForm.licensePlate" maxlength="20" required></label>            <label>Vehicle type<select v-model="vehicleForm.vehicleType" @change="updateVehicleTypeDefaults"><option value="VAN">Van</option><option value="RIGID_TRUCK">Rigid truck</option><option value="ARTICULATED_TRUCK">Articulated truck</option></select></label><label>Transmission<select v-model="vehicleForm.transmissionType"><option v-if="vehicleForm.vehicleType === 'VAN'" value="MANUAL">Manual</option><option v-if="vehicleForm.vehicleType === 'VAN'" value="AUTOMATIC">Automatic</option><option v-else value="AMT">Automated manual (AMT)</option></select></label><label>Make<input v-model.trim="vehicleForm.make" maxlength="100" required></label><label>Model<input v-model.trim="vehicleForm.model" maxlength="100" required></label><label>Year<input v-model.number="vehicleForm.year" type="number" min="1900" max="2100" required></label><label>Mileage (km)<input v-model.number="vehicleForm.currentMileageKm" type="number" min="0" step="1" required></label><label>Max weight (kg)<input v-model.number="vehicleForm.maxWeightCapacityKg" type="number" min="0.01" step="0.01" required></label><label>Max volume (m³)<input v-model.number="vehicleForm.maxVolumeM3" type="number" min="0.01" step="0.01" required></label><div class="form-actions"><button class="primary-button" :disabled="busy">{{ editingVehicleId === null ? 'Add vehicle' : 'Save changes' }}</button></div></form>
           </section>
@@ -1410,7 +1401,7 @@ routeForm.departureLocal = defaultDepartureTime()
             <PaginationControl v-if="sortedVehicles.length > pageSize" v-model:current-page="vehiclePage" v-model:page-size="pageSize" :page-count="pageCount(sortedVehicles.length)" :total="sortedVehicles.length" />
             <div v-if="!vehicles.length" class="empty-state"><strong>No vehicles registered</strong><p>Add a vehicle to start planning routes.</p></div>
             <div v-else-if="!sortedVehicles.length" class="empty-state"><strong>No matching vehicles</strong><p>Try a different plate, make, model, driver, or vehicle type.</p></div>
-            <div v-else class="table-wrap"><table><thead><tr><th>VEHICLE</th><th>CLASS / GEARBOX</th><th>ASSIGNED DRIVER</th><th>CAPACITY</th><th>MILEAGE</th><th>GEAR · DEMO</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="vehicle in paginatedVehicles" :key="vehicle.id"><td><button class="text-button manifest-select" @click="selectedVehicleId = vehicle.id">{{ vehicle.licensePlate }}</button><small>{{ vehicle.make }} {{ vehicle.model }} · {{ vehicle.year }}</small></td><td>{{ formatStatus(vehicle.vehicleType) }}<small>{{ formatStatus(vehicle.transmissionType) }}</small></td><td>{{ assignedDriver(vehicle.id) }}</td><td>{{ vehicle.maxWeightCapacityKg }} kg<small>{{ vehicle.maxVolumeM3 }} m³</small></td><td>{{ vehicle.currentMileageKm.toLocaleString() }} km</td><td><span class="demo-gear">{{ vehicle.status === 'IN_TRANSIT' ? `${(vehicle.id % 12) + 1}A` : '—' }}</span></td><td><span class="status-pill" :class="vehicle.status.toLowerCase()">{{ vehicleStatusLabel(vehicle) }}</span><span v-if="vehicle.maintenanceAutoTriggered && vehicle.status === 'IN_TRANSIT'" class="status-pill warning">MAINTENANCE DUE AFTER ROUTE</span></td><td><div class="row-actions"><button v-if="!isVehicleScheduled(vehicle.id) && vehicle.status !== 'IN_TRANSIT'" class="text-button" @click="editVehicle(vehicle)">Edit</button><select v-if="!isVehicleScheduled(vehicle.id) && (vehicle.status === 'AVAILABLE' || vehicle.status === 'MAINTENANCE')" class="compact-select" :value="vehicle.status" aria-label="Vehicle status" @change="updateVehicleStatus(vehicle, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'MAINTENANCE')"><option value="AVAILABLE">Available</option><option value="MAINTENANCE">In maintenance</option></select><button class="text-button danger-text" :disabled="vehicle.status === 'IN_TRANSIT' || hasVehicleRoute(vehicle.id)" :title="hasVehicleRoute(vehicle.id) ? 'Route history references this vehicle' : ''" @click="deleteVehicle(vehicle)">Delete</button></div></td></tr></tbody></table></div>
+            <div v-else class="table-wrap"><table><thead><tr><th>VEHICLE</th><th>CLASS / GEARBOX</th><th>ASSIGNED DRIVER</th><th>CAPACITY</th><th>MILEAGE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="vehicle in paginatedVehicles" :key="vehicle.id"><td><button class="text-button manifest-select" @click="openVehicleDetails(vehicle)">{{ vehicle.licensePlate }}</button><small>{{ vehicle.make }} {{ vehicle.model }} · {{ vehicle.year }}</small></td><td>{{ formatStatus(vehicle.vehicleType) }}<small>{{ formatStatus(vehicle.transmissionType) }}</small></td><td><button v-if="assignedDriverRoute(vehicle.id)" class="text-button" @click="openAssignedDriver(vehicle.id)">{{ assignedDriver(vehicle.id) }}</button><span v-else>—</span></td><td>{{ vehicle.maxWeightCapacityKg }} kg<small>{{ vehicle.maxVolumeM3 }} m³</small></td><td>{{ vehicle.currentMileageKm.toLocaleString() }} km</td><td><span class="status-pill" :class="vehicle.status.toLowerCase()">{{ vehicleStatusLabel(vehicle) }}</span><span v-if="vehicle.maintenanceAutoTriggered && vehicle.status === 'IN_TRANSIT'" class="status-pill warning">MAINTENANCE DUE AFTER ROUTE</span></td><td><div class="row-actions"><button v-if="!isVehicleScheduled(vehicle.id) && vehicle.status !== 'IN_TRANSIT'" class="text-button" @click="editVehicle(vehicle)">Edit</button><select v-if="!isVehicleScheduled(vehicle.id) && (vehicle.status === 'AVAILABLE' || vehicle.status === 'MAINTENANCE')" class="compact-select" :value="vehicle.status" aria-label="Vehicle status" @change="updateVehicleStatus(vehicle, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'MAINTENANCE')"><option value="AVAILABLE">Available</option><option value="MAINTENANCE">In maintenance</option></select><button class="text-button danger-text" :disabled="vehicle.status === 'IN_TRANSIT' || hasVehicleRoute(vehicle.id)" :title="hasVehicleRoute(vehicle.id) ? 'Route history references this vehicle' : ''" @click="deleteVehicle(vehicle)">Delete</button></div></td></tr></tbody></table></div>
             <PaginationControl v-if="sortedVehicles.length > pageSize" v-model:current-page="vehiclePage" v-model:page-size="pageSize" :page-count="pageCount(sortedVehicles.length)" :total="sortedVehicles.length" />
           </section>
           <section class="panel form-panel">
@@ -1430,14 +1421,14 @@ routeForm.departureLocal = defaultDepartureTime()
           <section class="panel">
             <div class="panel-heading"><div><h2>Trailer register</h2><p>{{ trailers.length }} trailers · assigned by cargo compatibility, capacity, vehicle type, and schedule</p></div></div>
             <div v-if="!trailers.length" class="empty-state"><strong>No trailers registered</strong><p>Add compatible trailers to support articulated trucks and freight requiring specialist equipment.</p></div>
-            <div v-else class="table-wrap"><table><thead><tr><th>TRAILER</th><th>CATEGORY</th><th>TOWING VEHICLE</th><th>CAPACITY</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>
-              <tr v-for="trailer in trailers" :key="trailer.id"><td><strong>{{ trailer.licensePlate }}</strong><small>{{ trailer.make }} {{ trailer.model }} · {{ trailer.year }}</small></td><td>{{ trailerTypeLabel(trailer.trailerType) }}</td><td>{{ formatStatus(trailer.compatibleVehicleType) }}</td><td>{{ trailer.maxWeightCapacityKg.toLocaleString() }} kg<small>{{ trailer.maxVolumeM3 }} m³</small></td><td><span class="status-pill" :class="trailer.status.toLowerCase()">{{ formatStatus(trailer.status) }}</span></td><td><div class="row-actions"><button v-if="trailer.status !== 'IN_TRANSIT'" class="text-button" @click="editTrailer(trailer)">Edit</button><select v-if="trailer.status !== 'IN_TRANSIT'" class="compact-select" :value="trailer.status" aria-label="Trailer status" @change="updateTrailerStatus(trailer, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'MAINTENANCE')"><option value="AVAILABLE">Available</option><option value="MAINTENANCE">In maintenance</option></select><button class="text-button danger-text" :disabled="trailer.status === 'IN_TRANSIT' || routes.some((route) => route.trailerId === trailer.id)" @click="deleteTrailer(trailer)">Delete</button></div></td></tr>
+            <div v-else class="table-wrap"><table><thead><tr><th>TRAILER</th><th>CATEGORY</th><th>TOWING VEHICLE</th><th>CAPACITY</th><th>LOWEST HEALTH</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>
+              <tr v-for="trailer in trailers" :key="trailer.id"><td><strong>{{ trailer.licensePlate }}</strong><small>{{ trailer.make }} {{ trailer.model }} · {{ trailer.year }}</small></td><td>{{ trailerTypeLabel(trailer.trailerType) }}</td><td>{{ formatStatus(trailer.compatibleVehicleType) }}</td><td>{{ trailer.maxWeightCapacityKg.toLocaleString() }} kg<small>{{ trailer.maxVolumeM3 }} m³</small></td><td>{{ Math.min(...trailer.maintenanceComponents.map((component) => component.healthPercent ?? 0)) }}%</td><td><span class="status-pill" :class="trailer.status.toLowerCase()">{{ formatStatus(trailer.status) }}</span><span v-if="trailer.maintenanceAutoTriggered && trailer.status === 'IN_TRANSIT'" class="status-pill warning">DUE AFTER ROUTE</span></td><td><div class="row-actions"><button v-if="!isTrailerScheduled(trailer.id) && trailer.status !== 'IN_TRANSIT'" class="text-button" @click="editTrailer(trailer)">Edit</button><select v-if="!isTrailerScheduled(trailer.id) && (trailer.status === 'AVAILABLE' || trailer.status === 'MAINTENANCE')" class="compact-select" :value="trailer.status" aria-label="Trailer status" @change="updateTrailerStatus(trailer, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'MAINTENANCE')"><option value="AVAILABLE">Available</option><option value="MAINTENANCE">In maintenance</option></select><button class="text-button danger-text" :disabled="trailer.status === 'IN_TRANSIT' || routes.some((route) => route.trailerId === trailer.id)" @click="deleteTrailer(trailer)">Delete</button></div></td></tr>
             </tbody></table></div>
           </section>
         </template>
         <template v-else-if="section === 'maintenance'">
           <div class="page-heading"><div><p class="eyebrow">MAINTENANCE / SERVICE HISTORY</p><h1>Maintenance &amp; Diagnostics</h1><p class="subtitle">Health is calculated from each component’s most recent recorded operation and current odometer/time.</p></div><span class="status-pill warning">WAREHOUSE · {{ warehouseCity }}</span></div>
-          <div class="maintenance-note"><strong>INTERVAL POLICY</strong><span>For intervals supplied as ranges, the conservative lower bound is used. Where both distance and time apply, the bar reflects whichever limit is closer. A vehicle enters maintenance at 10% or less and cannot be planned on a route.</span></div>
+          <div class="maintenance-note"><strong>INTERVAL POLICY</strong><span>Vehicles and trailers enter maintenance automatically at 10% health or less. Equipment without service history is held until its tracked components are serviced.</span></div>
           <section class="panel">
             <div class="panel-heading"><div><h2>Vehicle maintenance register</h2><p>{{ filteredMaintenanceVehicles.length }} of {{ vehicles.length }} vehicles · select a vehicle to view component health and service history</p></div><span class="status-pill" :class="maintenanceVehicles.length ? 'maintenance' : 'available'">{{ maintenanceVehicles.length }} IN MAINTENANCE</span></div>
             <div class="maintenance-toolbar"><label class="list-search">Search vehicles<input v-model.trim="maintenanceSearch" type="search" placeholder="Plate, make, model, class…"></label><label>Filter by status<select v-model="maintenanceStatusFilter"><option value="ALL">All statuses</option><option value="MAINTENANCE">In maintenance</option><option value="AVAILABLE">Available</option></select></label><label>Sort by<select v-model="maintenanceSort"><option value="PLATE">License plate</option><option value="STATUS">Status</option><option value="HEALTH">Lowest health first</option></select></label></div>
@@ -1460,8 +1451,7 @@ routeForm.departureLocal = defaultDepartureTime()
             </div>
           </Teleport>
           <section class="maintenance-lower">
-            <article class="panel"><div class="panel-heading"><div><h2>Automatic workshop queue</h2><p>Vehicles due at or below the 10% threshold</p></div><span class="status-pill" :class="maintenanceVehicles.length ? 'maintenance' : 'available'">{{ maintenanceVehicles.length }} UNITS</span></div><div v-if="!maintenanceVehicles.length" class="empty-state"><strong>No vehicles currently due</strong><p>Vehicles at 10% health or below appear here automatically.</p></div><div v-for="vehicle in maintenanceVehicles" :key="vehicle.id" class="workshop-row"><b class="bay-number">{{ vehicle.licensePlate }}</b><span><strong>{{ vehicle.make }} {{ vehicle.model }}</strong><small>{{ maintenanceSummary(vehicle) }}</small></span><span class="status-pill maintenance">IN MAINTENANCE</span></div></article>
-            <article class="panel"><div class="panel-heading"><div><h2>Diagnostic trouble codes</h2><p>Illustrative fault feed · no vehicle connection</p></div><span class="demo-flag">DEMO</span></div><div class="dtc-row"><span class="dtc-code">DTC P0420</span><span><strong>Catalyst efficiency warning</strong><small>Sample fault · requires workshop diagnosis</small></span><span class="status-pill warning">ADVISORY</span></div><div class="dtc-row"><span class="dtc-code">DTC B10A1</span><span><strong>Filament open circuit</strong><small>Sample fault · lighting circuit</small></span><span class="status-pill critical">ACTIVE</span></div></article>
+            <article class="panel"><div class="panel-heading"><div><h2>Automatic workshop queue</h2><p>{{ maintenanceVehicles.length }} vehicles and {{ maintenanceTrailers.length }} trailers currently held</p></div><span class="status-pill" :class="maintenanceVehicles.length || maintenanceTrailers.length ? 'maintenance' : 'available'">{{ maintenanceVehicles.length + maintenanceTrailers.length }} UNITS</span></div><div v-if="!maintenanceVehicles.length && !maintenanceTrailers.length" class="empty-state"><strong>No equipment currently due</strong><p>Vehicles and trailers at 10% health or below appear here automatically.</p></div><div v-for="vehicle in maintenanceVehicles" :key="`vehicle-${vehicle.id}`" class="workshop-row"><b class="bay-number">{{ vehicle.licensePlate }}</b><span><strong>{{ vehicle.make }} {{ vehicle.model }}</strong><small>{{ maintenanceSummary(vehicle) }}</small></span><span class="status-pill maintenance">VEHICLE</span></div><div v-for="trailer in maintenanceTrailers" :key="`trailer-${trailer.id}`" class="workshop-row"><b class="bay-number">{{ trailer.licensePlate }}</b><span><strong>{{ trailer.make }} {{ trailer.model }}</strong><small>{{ trailer.maintenanceAutoTriggered ? 'Automatic hold · service required' : 'Manually assigned to maintenance' }}</small></span><span class="status-pill maintenance">TRAILER</span></div></article>
           </section>
         </template>
         <template v-else>
@@ -1483,10 +1473,33 @@ routeForm.departureLocal = defaultDepartureTime()
         <button :aria-current="section === 'routes' ? 'page' : undefined" @click="selectMobileSection('routes')"><span>↗</span><small>Routes</small></button>
         <button :aria-current="section === 'freight' ? 'page' : undefined" @click="selectMobileSection('freight')"><span>▣</span><small>Freight</small></button>
         <button :aria-current="section === 'drivers' ? 'page' : undefined" @click="selectMobileSection('drivers')"><span>♙</span><small>Drivers</small></button>
-        <button :aria-current="section === 'fleet' ? 'page' : undefined" @click="selectMobileSection('fleet')"><span>▰</span><small>Fleet</small></button>
         <button :aria-expanded="mobileMoreOpen" aria-controls="mobile-more-menu" :aria-current="section === 'maintenance' || section === 'finance' ? 'page' : undefined" @click="mobileMoreOpen = !mobileMoreOpen"><span>⋯</span><small>More</small></button>
       </nav>
     </div>
+    <Teleport to="body">
+      <div v-if="selectedDriver" class="modal-backdrop" @click.self="selectedDriverId = null">
+        <section class="panel modal-dialog driver-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="driver-detail-title">
+          <div class="panel-heading">
+            <div><h2 id="driver-detail-title">{{ selectedDriver.name }}</h2><p>Driver profile and dispatch history</p></div>
+            <button class="icon-button" aria-label="Close driver details" @click="selectedDriverId = null">×</button>
+          </div>
+          <div class="driver-detail-body">
+            <div class="driver-detail-grid">
+              <div><small>EMAIL</small><strong>{{ selectedDriver.email }}</strong></div>
+              <div><small>STATUS</small><span class="status-pill" :class="selectedDriver.status.toLowerCase()">{{ formatStatus(selectedDriver.status) }}</span></div>
+              <div><small>LICENSE CATEGORIES</small><strong>{{ selectedDriver.licenseCategories.join(', ') || '—' }}</strong></div>
+              <div><small>ROUTE HISTORY</small><strong>{{ selectedDriverRoutes.length }} route{{ selectedDriverRoutes.length === 1 ? '' : 's' }}</strong></div>
+            </div>
+            <h3>Routes</h3>
+            <div v-if="!selectedDriverRoutes.length" class="empty-state"><strong>No route history</strong><p>This driver has not been assigned to a route.</p></div>
+            <div v-for="route in selectedDriverRoutes" :key="route.id" class="driver-route-row">
+              <div><strong>Route #{{ route.id }} · {{ route.vehicleLicensePlate }}</strong><small>{{ displayDate(route.departureTime) }} · {{ route.stops.length }} stop{{ route.stops.length === 1 ? '' : 's' }}</small></div>
+              <span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </Teleport>
   </main>
   <main v-else class="mobile-login-shell">
     <section class="mobile-login-card" aria-labelledby="mobile-login-title">

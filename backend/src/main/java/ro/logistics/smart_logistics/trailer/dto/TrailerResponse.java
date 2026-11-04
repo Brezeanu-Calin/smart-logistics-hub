@@ -19,6 +19,7 @@ public record TrailerResponse(
         Double maxWeightCapacityKg,
         Double maxVolumeM3,
         TrailerStatus status,
+        boolean maintenanceAutoTriggered,
         List<TrailerMaintenanceComponentResponse> maintenanceComponents,
         List<TrailerMaintenanceRecordResponse> maintenanceHistory
 ) {
