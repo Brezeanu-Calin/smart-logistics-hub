@@ -9,6 +9,7 @@ import api, {
   isApiNotFoundError,
   type Driver,
   type DriverRequest,
+  type FinanceResponse,
   type Goods,
   type GoodsRequest,
   type Route,
@@ -117,6 +118,11 @@ const expandedRouteMaps = ref(new Set<number>())
 const hiddenLiveRouteMaps = ref(new Set<number>())
 const loadingRouteMaps = ref(new Set<number>())
 const selectedMaintenanceVehicleId = ref<number | null>(null)
+const selectedFleetVehicleId = ref<number | null>(null)
+const fleetDetailTab = ref<'shipments' | 'maintenance' | 'profitability'>('shipments')
+const fleetFinance = ref<FinanceResponse | null>(null)
+const fleetFinanceLoading = ref(false)
+const fleetFinanceError = ref('')
 const selectedDriverId = ref<number | null>(null)
 const expandedLiveRouteDetails = ref(new Set<number>())
 const fleetSort = ref<'CLASS' | 'MILEAGE' | 'STATUS'>('CLASS')
@@ -147,6 +153,17 @@ const maintenanceVehicles = computed(() => vehicles.value.filter((vehicle) => ve
 const maintenanceTrailers = computed(() => trailers.value.filter((trailer) => trailer.status === 'MAINTENANCE'))
 const selectedMaintenanceVehicle = computed(() =>
   vehicles.value.find((vehicle) => vehicle.id === selectedMaintenanceVehicleId.value) ?? null,
+)
+const selectedFleetVehicle = computed(() =>
+  vehicles.value.find((vehicle) => vehicle.id === selectedFleetVehicleId.value) ?? null,
+)
+const selectedFleetRoutes = computed(() =>
+  routes.value
+    .filter((route) => route.vehicleId === selectedFleetVehicleId.value)
+    .sort((first, second) => second.departureTime.localeCompare(first.departureTime)),
+)
+const selectedVehicleProfitability = computed(() =>
+  fleetFinance.value?.vehicles.find((vehicle) => vehicle.vehicleId === selectedFleetVehicleId.value) ?? null,
 )
 const selectedDriver = computed(() =>
   drivers.value.find((driver) => driver.id === selectedDriverId.value) ?? null,
@@ -627,6 +644,9 @@ watch(() => routeForm.vehicleId, (vehicleId, previousId) => {
 watch(routeNeedsTrailer, (required) => {
   if (!required) routeForm.trailerId = 0
 })
+watch(section, (nextSection) => {
+  if (nextSection !== 'fleet') selectedFleetVehicleId.value = null
+})
 watch(filteredDrivers, (items) => { driverPage.value = Math.min(driverPage.value, pageCount(items.length)) })
 watch(sortedVehicles, (items) => { vehiclePage.value = Math.min(vehiclePage.value, pageCount(items.length)) })
 watch(filteredGoods, (items) => { freightPage.value = Math.min(freightPage.value, pageCount(items.length)) })
@@ -1048,11 +1068,30 @@ function openDriverDetails(driverId: number) {
 }
 
 function openVehicleDetails(vehicle: Vehicle) {
-  const route = assignedDriverRoute(vehicle.id)
-  if (route) openDriverDetails(route.driverId)
-  else {
-    selectedMaintenanceVehicleId.value = vehicle.id
-    section.value = 'maintenance'
+  selectedFleetVehicleId.value = vehicle.id
+  fleetDetailTab.value = 'shipments'
+  fleetFinanceError.value = ''
+  void loadFleetFinance()
+}
+
+async function loadFleetFinance() {
+  const now = new Date()
+  const from = new Date(now.getFullYear(), now.getMonth(), 1)
+  const localDate = (date: Date) => {
+    const adjusted = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
+    return adjusted.toISOString().slice(0, 10)
+  }
+  fleetFinanceLoading.value = true
+  fleetFinanceError.value = ''
+  try {
+    const response = await api.get<FinanceResponse>('/finance', {
+      params: { from: localDate(from), to: localDate(now) },
+    })
+    fleetFinance.value = response.data
+  } catch (requestError) {
+    fleetFinanceError.value = getErrorMessage(requestError)
+  } finally {
+    fleetFinanceLoading.value = false
   }
 }
 
@@ -1224,6 +1263,7 @@ routeForm.departureLocal = defaultDepartureTime()
         <button :class="{ selected: section === 'overview' }" @click="section = 'overview'"><span>▦</span> Overview</button>
         <button :class="{ selected: section === 'routes' }" @click="section = 'routes'"><span>↗</span> Route Planner <b>{{ activeRoutes }}</b></button>
         <button :class="{ selected: section === 'freight' }" @click="section = 'freight'"><span>▣</span> Freight Jobs</button>
+        <button :class="{ selected: section === 'fleet' }" @click="section = 'fleet'"><span>▰</span> Fleet</button>
         <button :class="{ selected: section === 'maintenance' }" @click="section = 'maintenance'"><span>⚒</span> Maintenance <b>{{ maintenanceVehicles.length }}</b></button>
         <button :class="{ selected: section === 'drivers' }" @click="section = 'drivers'"><span>♙</span> Drivers</button>
         <button :class="{ selected: section === 'finance' }" @click="section = 'finance'"><span>€</span> Finance</button>
@@ -1404,6 +1444,55 @@ routeForm.departureLocal = defaultDepartureTime()
             <div v-else class="table-wrap"><table><thead><tr><th>VEHICLE</th><th>CLASS / GEARBOX</th><th>ASSIGNED DRIVER</th><th>CAPACITY</th><th>MILEAGE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="vehicle in paginatedVehicles" :key="vehicle.id"><td><button class="text-button manifest-select" @click="openVehicleDetails(vehicle)">{{ vehicle.licensePlate }}</button><small>{{ vehicle.make }} {{ vehicle.model }} · {{ vehicle.year }}</small></td><td>{{ formatStatus(vehicle.vehicleType) }}<small>{{ formatStatus(vehicle.transmissionType) }}</small></td><td><button v-if="assignedDriverRoute(vehicle.id)" class="text-button" @click="openAssignedDriver(vehicle.id)">{{ assignedDriver(vehicle.id) }}</button><span v-else>—</span></td><td>{{ vehicle.maxWeightCapacityKg }} kg<small>{{ vehicle.maxVolumeM3 }} m³</small></td><td>{{ vehicle.currentMileageKm.toLocaleString() }} km</td><td><span class="status-pill" :class="vehicle.status.toLowerCase()">{{ vehicleStatusLabel(vehicle) }}</span><span v-if="vehicle.maintenanceAutoTriggered && vehicle.status === 'IN_TRANSIT'" class="status-pill warning">MAINTENANCE DUE AFTER ROUTE</span></td><td><div class="row-actions"><button v-if="!isVehicleScheduled(vehicle.id) && vehicle.status !== 'IN_TRANSIT'" class="text-button" @click="editVehicle(vehicle)">Edit</button><select v-if="!isVehicleScheduled(vehicle.id) && (vehicle.status === 'AVAILABLE' || vehicle.status === 'MAINTENANCE')" class="compact-select" :value="vehicle.status" aria-label="Vehicle status" @change="updateVehicleStatus(vehicle, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'MAINTENANCE')"><option value="AVAILABLE">Available</option><option value="MAINTENANCE">In maintenance</option></select><button class="text-button danger-text" :disabled="vehicle.status === 'IN_TRANSIT' || hasVehicleRoute(vehicle.id)" :title="hasVehicleRoute(vehicle.id) ? 'Route history references this vehicle' : ''" @click="deleteVehicle(vehicle)">Delete</button></div></td></tr></tbody></table></div>
             <PaginationControl v-if="sortedVehicles.length > pageSize" v-model:current-page="vehiclePage" v-model:page-size="pageSize" :page-count="pageCount(sortedVehicles.length)" :total="sortedVehicles.length" />
           </section>
+          <Teleport to="body">
+            <div v-if="selectedFleetVehicle" class="modal-backdrop" @click.self="selectedFleetVehicleId = null">
+              <section class="panel modal-dialog fleet-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="fleet-detail-title">
+                <div class="panel-heading">
+                  <div><p class="eyebrow">VEHICLE PROFILE</p><h2 id="fleet-detail-title">{{ selectedFleetVehicle.licensePlate }} · {{ selectedFleetVehicle.make }} {{ selectedFleetVehicle.model }}</h2><p>{{ formatStatus(selectedFleetVehicle.vehicleType) }} · {{ selectedFleetVehicle.year }} · {{ selectedFleetVehicle.currentMileageKm.toLocaleString() }} km</p></div>
+                  <button class="icon-button" aria-label="Close vehicle details" @click="selectedFleetVehicleId = null">×</button>
+                </div>
+                <div class="fleet-detail-tabs" role="tablist" aria-label="Vehicle details">
+                  <button role="tab" :aria-selected="fleetDetailTab === 'shipments'" :class="{ selected: fleetDetailTab === 'shipments' }" @click="fleetDetailTab = 'shipments'">Shipment history</button>
+                  <button role="tab" :aria-selected="fleetDetailTab === 'maintenance'" :class="{ selected: fleetDetailTab === 'maintenance' }" @click="fleetDetailTab = 'maintenance'">Maintenance</button>
+                  <button role="tab" :aria-selected="fleetDetailTab === 'profitability'" :class="{ selected: fleetDetailTab === 'profitability' }" @click="fleetDetailTab = 'profitability'">Profitability</button>
+                </div>
+                <div v-if="fleetDetailTab === 'shipments'" class="fleet-detail-body">
+                  <div v-if="!selectedFleetRoutes.length" class="empty-state"><strong>No shipment history</strong><p>Shipments assigned to this vehicle will appear here.</p></div>
+                  <div v-for="route in selectedFleetRoutes" :key="route.id" class="fleet-history-entry">
+                    <div class="fleet-history-heading"><strong>ROUTE #{{ route.id }}</strong><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></div>
+                    <p>{{ displayDate(route.departureTime) }} · {{ (route.distanceMeters / 1000).toFixed(1) }} km · {{ route.driverName }}</p>
+                    <div v-for="stop in route.stops.filter((item) => item.type === 'DELIVERY')" :key="`${route.id}-${stop.goodsId}`" class="fleet-shipment-row">
+                      <span>{{ stop.trackingCode }}</span><strong>{{ goods.find((item) => item.id === stop.goodsId)?.clientName ?? 'Shipment' }}</strong><small>Delivered to {{ stop.city }} · {{ formatStatus(goods.find((item) => item.id === stop.goodsId)?.status ?? route.status) }}</small>
+                    </div>
+                    <p v-if="!route.stops.some((stop) => stop.type === 'DELIVERY')" class="fleet-detail-muted">No shipment stops recorded for this route.</p>
+                  </div>
+                </div>
+                <div v-else-if="fleetDetailTab === 'maintenance'" class="fleet-detail-body">
+                  <div v-for="component in selectedFleetVehicle.maintenanceComponents" :key="component.key" class="fleet-maintenance-entry">
+                    <div class="fleet-history-heading"><strong>{{ component.label }}</strong><span v-if="component.healthPercent !== null" class="maintenance-health-summary" :class="healthClass(component.healthPercent)">{{ component.healthPercent }}% HEALTH</span><span v-else class="history-only">HISTORY ONLY</span></div>
+                    <div v-if="component.healthPercent !== null" class="health-track"><span :class="healthClass(component.healthPercent)" :style="{ width: `${component.healthPercent}%` }"></span></div>
+                    <p>{{ component.lastPerformedAt ? `Last service ${displayDate(component.lastPerformedAt)}` : 'No service history recorded' }}<template v-if="component.lastOdometerKm !== null"> · {{ component.lastOdometerKm.toLocaleString() }} km</template><template v-if="component.lastCostEur !== null"> · €{{ component.lastCostEur.toFixed(2) }}</template></p>
+                    <small>{{ component.inspectionNote ?? remainingInterval(component) }}</small>
+                  </div>
+                  <button class="secondary-button" @click="selectedMaintenanceVehicleId = selectedFleetVehicleId; selectedFleetVehicleId = null; section = 'maintenance'">Open maintenance manager</button>
+                </div>
+                <div v-else class="fleet-detail-body">
+                  <p class="fleet-finance-period">CURRENT MONTH · {{ fleetFinance?.from ?? '' }} — {{ fleetFinance?.to ?? '' }}</p>
+                  <div v-if="fleetFinanceLoading" class="empty-state"><strong>Loading vehicle profitability…</strong></div>
+                  <div v-else-if="fleetFinanceError" class="fleet-finance-error" role="alert">{{ fleetFinanceError }} <button class="text-button" @click="void loadFleetFinance()">Retry</button></div>
+                  <template v-else-if="selectedVehicleProfitability">
+                    <div class="fleet-profit-grid">
+                      <article><small>FREIGHT REVENUE</small><strong>€{{ selectedVehicleProfitability.freightRevenueEur.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</strong></article>
+                      <article><small>MAINTENANCE COSTS</small><strong>€{{ selectedVehicleProfitability.maintenanceCostsEur.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</strong></article>
+                      <article><small>NET PROFIT</small><strong :class="selectedVehicleProfitability.netProfitEur < 0 ? 'finance-negative' : 'finance-positive'">€{{ selectedVehicleProfitability.netProfitEur.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</strong></article>
+                    </div>
+                    <p class="fleet-detail-muted">Based on delivered freight and recorded maintenance for this month. Fuel, wages, tolls, insurance, and other unrecorded costs are excluded.</p>
+                  </template>
+                  <div v-else-if="!fleetFinanceLoading && !fleetFinanceError" class="empty-state"><strong>No financial activity this month</strong><p>Vehicle revenue and maintenance totals will appear after recorded activity.</p></div>
+                </div>
+              </section>
+            </div>
+          </Teleport>
           <section class="panel form-panel">
             <div class="panel-heading"><div><h2>{{ editingTrailerId === null ? 'Add a trailer' : 'Edit trailer' }}</h2><p>Set the trailer’s cargo category and compatible towing vehicle.</p></div><button v-if="editingTrailerId !== null" class="text-button" @click="resetTrailerForm">Discard changes</button></div>
             <form class="form-grid three-column" @submit.prevent="saveTrailer">
@@ -1462,6 +1551,7 @@ routeForm.departureLocal = defaultDepartureTime()
     </section>
     <div class="mobile-nav-dock">
       <div v-if="mobileMoreOpen" id="mobile-more-menu" class="mobile-more-menu" role="group" aria-label="More sections">
+        <button :aria-current="section === 'fleet' ? 'page' : undefined" @click="selectMobileSection('fleet')"><span>▰</span> Fleet</button>
         <button :aria-current="section === 'maintenance' ? 'page' : undefined" @click="selectMobileSection('maintenance')"><span>⚒</span> Maintenance <b>{{ maintenanceVehicles.length }}</b></button>
         <button :aria-current="section === 'finance' ? 'page' : undefined" @click="selectMobileSection('finance')"><span>€</span> Finance</button>
         <button v-if="pushConfig.enabled" :disabled="pushBusy" @click="pushEnabled ? disablePushNotifications() : enablePushNotifications()"><span>♢</span>{{ pushBusy ? 'Working…' : pushEnabled ? 'Disable notifications' : 'Enable notifications' }}</button>
@@ -1473,7 +1563,7 @@ routeForm.departureLocal = defaultDepartureTime()
         <button :aria-current="section === 'routes' ? 'page' : undefined" @click="selectMobileSection('routes')"><span>↗</span><small>Routes</small></button>
         <button :aria-current="section === 'freight' ? 'page' : undefined" @click="selectMobileSection('freight')"><span>▣</span><small>Freight</small></button>
         <button :aria-current="section === 'drivers' ? 'page' : undefined" @click="selectMobileSection('drivers')"><span>♙</span><small>Drivers</small></button>
-        <button :aria-expanded="mobileMoreOpen" aria-controls="mobile-more-menu" :aria-current="section === 'maintenance' || section === 'finance' ? 'page' : undefined" @click="mobileMoreOpen = !mobileMoreOpen"><span>⋯</span><small>More</small></button>
+        <button :aria-expanded="mobileMoreOpen" aria-controls="mobile-more-menu" :aria-current="section === 'fleet' || section === 'maintenance' || section === 'finance' ? 'page' : undefined" @click="mobileMoreOpen = !mobileMoreOpen"><span>⋯</span><small>More</small></button>
       </nav>
     </div>
     <Teleport to="body">

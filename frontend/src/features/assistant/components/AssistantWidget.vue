@@ -118,19 +118,25 @@ async function loadContext(domains: NonNullable<ReturnType<typeof contextDomains
     ({ id, name, email, licenseCategories, status }))
   if (domains.vehicles) context.vehicles = vehiclesResponse.data.map(({ maintenanceComponents, ...vehicle }) => ({
     ...vehicle,
-    maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur }) =>
-      ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur })),
+    ...(Array.isArray(maintenanceComponents) ? {
+      maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur }) =>
+        ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur })),
+    } : {}),
   }))
   if (domains.trailers) context.trailers = trailersResponse.data.map(({ maintenanceHistory: _maintenanceHistory, maintenanceComponents, ...trailer }) => ({
     ...trailer,
-    maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur }) =>
-      ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur })),
+    ...(Array.isArray(maintenanceComponents) ? {
+      maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur }) =>
+        ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur })),
+    } : {}),
   }))
   if (domains.freight) context.freight = goodsResponse.data
   if (warehouseResponse) context.warehouseCity = warehouseResponse.data.warehouseCity
   if (domains.routes) context.routes = routesResponse.data.map(({ geometry: _geometry, stops, ...route }) => ({
     ...route,
-    stops: stops.map(({ latitude: _latitude, longitude: _longitude, ...stop }) => stop),
+    ...(Array.isArray(stops) ? {
+      stops: stops.map(({ latitude: _latitude, longitude: _longitude, ...stop }) => stop),
+    } : {}),
   }))
   if (domains.finance && financeResponse.data) {
     const { freightMargins, ...financeSummary } = financeResponse.data

@@ -50,7 +50,7 @@ type FormModal = {
 }
 type ChatLine = AssistantMessage & { action?: AssistantAction }
 
-const TABS: Tab[] = ['Home', 'Routes', 'Freight', 'Drivers', 'Service', 'Finance']
+const TABS: Tab[] = ['Home', 'Routes', 'Freight', 'Drivers', 'Fleet', 'Service', 'Finance']
 const ACCENT = '#f59e0b'
 const NAVY = '#111416'
 const MAX_OPERATIONAL_CONTEXT_BYTES = 150_000
@@ -167,6 +167,10 @@ function MobileApp() {
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<FormModal | null>(null)
   const [selectedDriverId, setSelectedDriverId] = useState<number | null>(null)
+  const [selectedFleetVehicleId, setSelectedFleetVehicleId] = useState<number | null>(null)
+  const [fleetDetailTab, setFleetDetailTab] = useState<'Shipments' | 'Maintenance' | 'Profitability'>('Shipments')
+  const [fleetPage, setFleetPage] = useState(1)
+  const [fleetSort, setFleetSort] = useState<'PLATE' | 'MILEAGE' | 'STATUS'>('PLATE')
   const [chat, setChat] = useState<ChatLine[]>([])
   const [chatInput, setChatInput] = useState('')
   const [chatBusy, setChatBusy] = useState(false)
@@ -175,16 +179,22 @@ function MobileApp() {
   const [expandedHealth, setExpandedHealth] = useState<Record<string, boolean>>({})
   const selectedDriver = drivers.find((driver) => driver.id === selectedDriverId) ?? null
   const driverRoutes = selectedDriver ? routes.filter((route) => route.driverId === selectedDriver.id) : []
+  const selectedFleetVehicle = vehicles.find((vehicle) => vehicle.id === selectedFleetVehicleId) ?? null
+  const selectedFleetRoutes = routes
+    .filter((route) => route.vehicleId === selectedFleetVehicleId)
+    .sort((first, second) => second.departureTime.localeCompare(first.departureTime))
+  const selectedVehicleProfitability = finance?.vehicles.find((vehicle) => vehicle.vehicleId === selectedFleetVehicleId) ?? null
 
-  const driverForVehicle = (vehicleId: number) => routes.find((route) =>
+  const driverForVehicle = useCallback((vehicleId: number) => routes.find((route) =>
     route.vehicleId === vehicleId
     && (route.status === 'PLANNED' || route.status === 'ACTIVE'
       || (route.status === 'COMPLETED' && route.estimatedReturnTime && !route.returnedAt)),
-  )
+  ), [routes])
 
   const setTab = (nextTab: Tab) => {
     router.setParams({ screen: nextTab.toLowerCase() })
     setSearch('')
+    setSelectedFleetVehicleId(null)
   }
 
   const fetchData = useCallback(async () => {
@@ -199,6 +209,7 @@ function MobileApp() {
     ])
     setDrivers(nextDrivers)
     setVehicles(nextVehicles)
+    setFleetPage(1)
     setTrailers(nextTrailers)
     setGoods(nextGoods)
     setRoutes(nextRoutes)
@@ -254,6 +265,18 @@ function MobileApp() {
     dueVehicles: vehicles.filter((vehicle) => vehicle.status === 'MAINTENANCE').length,
     dueTrailers: trailers.filter((trailer) => trailer.status === 'MAINTENANCE').length,
   }), [drivers, goods, routes, trailers, vehicles])
+  const filteredFleetVehicles = useMemo(() => {
+    const query = search.trim().toLowerCase()
+    return vehicles
+      .filter((vehicle) => `${vehicle.licensePlate} ${vehicle.make} ${vehicle.model} ${vehicle.vehicleType} ${vehicle.status} ${driverForVehicle(vehicle.id)?.driverName ?? ''}`.toLowerCase().includes(query))
+      .sort((first, second) => {
+        if (fleetSort === 'MILEAGE') return second.currentMileageKm - first.currentMileageKm
+        if (fleetSort === 'STATUS') return first.status.localeCompare(second.status) || first.licensePlate.localeCompare(second.licensePlate)
+        return first.licensePlate.localeCompare(second.licensePlate)
+      })
+  }, [driverForVehicle, fleetSort, search, vehicles])
+  const fleetPageCount = Math.max(1, Math.ceil(filteredFleetVehicles.length / 10))
+  const paginatedFleetVehicles = filteredFleetVehicles.slice((fleetPage - 1) * 10, fleetPage * 10)
 
   const hasScheduledDriverRoute = (id: number) => routes.some((route) =>
     route.driverId === id && (route.status === 'PLANNED' || route.status === 'ACTIVE'))
@@ -666,15 +689,19 @@ function MobileApp() {
         ...(domains.vehicles ? {
           vehicles: vehicles.map(({ maintenanceComponents, ...vehicle }) => ({
             ...vehicle,
-            maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur }) =>
-              ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur })),
+            ...(Array.isArray(maintenanceComponents) ? {
+              maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur }) =>
+                ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastOdometerKm, lastCostEur })),
+            } : {}),
           })),
         } : {}),
         ...(domains.trailers ? {
           trailers: trailers.map(({ maintenanceHistory: _maintenanceHistory, maintenanceComponents, ...trailer }) => ({
             ...trailer,
-            maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur }) =>
-              ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur })),
+            ...(Array.isArray(maintenanceComponents) ? {
+              maintenanceComponents: maintenanceComponents.map(({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur }) =>
+                ({ key, label, healthPercent, daysRemaining, lastPerformedAt, lastCostEur })),
+            } : {}),
           })),
         } : {}),
         ...(domains.freight ? { goods } : {}),
@@ -682,7 +709,9 @@ function MobileApp() {
         ...(domains.routes ? {
           routes: routes.map(({ geometry: _geometry, stops, ...route }) => ({
             ...route,
-            stops: stops.map(({ latitude: _latitude, longitude: _longitude, ...stop }) => stop),
+            ...(Array.isArray(stops) ? {
+              stops: stops.map(({ latitude: _latitude, longitude: _longitude, ...stop }) => stop),
+            } : {}),
           })),
         } : {}),
         ...(domains.finance ? { finance: assistantFinanceContext(finance, domains.includeMargins) } : {}),
@@ -893,14 +922,24 @@ function MobileApp() {
               <Button label="+ Vehicle" onPress={() => openForm('vehicle', { vehicleType: 'VAN', transmissionType: 'MANUAL', year: new Date().getFullYear(), maxWeightCapacityKg: 1000, maxVolumeM3: 10, currentMileageKm: 0 })} />
               <Button label="+ Trailer" onPress={() => openForm('trailer', { trailerType: 'BOX_TRAILER', compatibleVehicleType: 'VAN', year: new Date().getFullYear(), maxWeightCapacityKg: 1000, maxVolumeM3: 10 })} secondary />
             </View>
-            <SearchInput value={search} onChangeText={setSearch} placeholder="Search plates, make, or model" />
-            <Text style={styles.subheading}>Vehicles ({vehicles.length})</Text>
-            {vehicles.filter((vehicle) => filtered(`${vehicle.licensePlate} ${vehicle.make} ${vehicle.model} ${vehicle.status}`)).map((vehicle) => (
+            <SearchInput value={search} onChangeText={(value) => { setSearch(value); setFleetPage(1) }} placeholder="Search plate, make, model, class, status…" />
+            <View style={styles.headingRow}>
+              <Text style={styles.subheading}>Vehicles ({filteredFleetVehicles.length} of {vehicles.length})</Text>
+              <View style={styles.fleetSortOptions}>
+                {(['PLATE', 'MILEAGE', 'STATUS'] as const).map((sort) => (
+                  <Pressable key={sort} onPress={() => { setFleetSort(sort); setFleetPage(1) }} style={[styles.fleetSortButton, fleetSort === sort && styles.fleetSortButtonSelected]}>
+                    <Text style={[styles.fleetSortText, fleetSort === sort && styles.fleetSortTextSelected]}>{sort}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+            {paginatedFleetVehicles.map((vehicle) => (
               <Card key={vehicle.id} title={`${vehicle.licensePlate} · ${vehicle.make} ${vehicle.model}`} trailing={<Badge value={vehicle.status} />}>
                 <Text style={styles.mutedText}>{displayStatus(vehicle.vehicleType)} · {vehicle.year} · {vehicle.currentMileageKm.toLocaleString()} km · {vehicle.maxWeightCapacityKg.toLocaleString()} kg</Text>
                 {vehicle.maintenanceAutoTriggered ? <Text style={styles.warningText}>Automatically held for maintenance.</Text> : null}
                 {driverForVehicle(vehicle.id) ? <LinkButton label={`Driver details · ${driverForVehicle(vehicle.id)?.driverName}`} onPress={() => setSelectedDriverId(driverForVehicle(vehicle.id)?.driverId ?? null)} /> : null}
                 <View style={styles.rowActions}>
+                  <LinkButton label="Vehicle details" onPress={() => { setSelectedFleetVehicleId(vehicle.id); setFleetDetailTab('Shipments') }} />
                   {!hasScheduledVehicleRoute(vehicle.id) && vehicle.status !== 'IN_TRANSIT'
                     ? <LinkButton label="Edit" onPress={() => openForm('vehicle', vehicle, { editingId: vehicle.id })} />
                     : null}
@@ -919,6 +958,17 @@ function MobileApp() {
                 </View>
               </Card>
             ))}
+            {filteredFleetVehicles.length > 10 ? (
+              <View style={styles.fleetPagination}>
+                <Text style={styles.mutedText}>Showing {(fleetPage - 1) * 10 + 1}–{Math.min(fleetPage * 10, filteredFleetVehicles.length)} of {filteredFleetVehicles.length}</Text>
+                <View style={styles.rowActions}>
+                  <LinkButton label="← Previous" disabled={fleetPage <= 1} onPress={() => setFleetPage((page) => Math.max(1, page - 1))} />
+                  <Text style={styles.fleetPageLabel}>{fleetPage} / {fleetPageCount}</Text>
+                  <LinkButton label="Next →" disabled={fleetPage >= fleetPageCount} onPress={() => setFleetPage((page) => Math.min(fleetPageCount, page + 1))} />
+                </View>
+              </View>
+            ) : null}
+            {!filteredFleetVehicles.length ? <Empty>{vehicles.length ? 'No vehicles match this search.' : 'No vehicles registered.'}</Empty> : null}
             <Text style={styles.subheading}>Trailers ({trailers.length})</Text>
             {trailers.filter((trailer) => filtered(`${trailer.licensePlate} ${trailer.make} ${trailer.model} ${trailer.status}`)).map((trailer) => (
               <Card key={trailer.id} title={`${trailer.licensePlate} · ${trailer.make} ${trailer.model}`} trailing={<Badge value={trailer.status} />}>
@@ -1121,6 +1171,84 @@ function MobileApp() {
                 {driverRoutes.length
                   ? driverRoutes.map((route) => <DataRow key={route.id} label={`Route #${route.id} · ${displayStatus(route.status)}`} value={`${route.vehicleLicensePlate} · ${dateString(route.departureTime)}`} />)
                   : <Empty>No route history recorded.</Empty>}
+              </ScrollView>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+      <Modal visible={selectedFleetVehicle !== null} transparent animationType="slide" onRequestClose={() => setSelectedFleetVehicleId(null)}>
+        <View style={styles.modalScrim}>
+          <View style={styles.modalFrame}>
+            <View style={styles.modalHeader}>
+              <View style={styles.flex}>
+                <Text style={styles.cardTitle}>{selectedFleetVehicle?.licensePlate} · {selectedFleetVehicle?.make} {selectedFleetVehicle?.model}</Text>
+                <Text style={styles.mutedText}>{selectedFleetVehicle ? `${displayStatus(selectedFleetVehicle.vehicleType)} · ${selectedFleetVehicle.year} · ${selectedFleetVehicle.currentMileageKm.toLocaleString()} km` : ''}</Text>
+              </View>
+              <Pressable onPress={() => setSelectedFleetVehicleId(null)} accessibilityLabel="Close vehicle details"><Text style={styles.closeText}>×</Text></Pressable>
+            </View>
+            <View style={styles.detailTabs}>
+              {(['Shipments', 'Maintenance', 'Profitability'] as const).map((item) => (
+                <Pressable key={item} onPress={() => setFleetDetailTab(item)} style={[styles.detailTab, fleetDetailTab === item && styles.detailTabSelected]}>
+                  <Text style={[styles.detailTabText, fleetDetailTab === item && styles.detailTabTextSelected]}>{item}</Text>
+                </Pressable>
+              ))}
+            </View>
+            {selectedFleetVehicle ? (
+              <ScrollView contentContainerStyle={styles.modalContent}>
+                {fleetDetailTab === 'Shipments' ? (
+                  selectedFleetRoutes.length ? selectedFleetRoutes.map((route) => {
+                    const deliveries = route.stops.filter((stop) => stop.type === 'DELIVERY')
+                    return (
+                      <View key={route.id} style={styles.vehicleHistoryCard}>
+                        <View style={styles.headingRow}>
+                          <Text style={styles.bodyText}>ROUTE #{route.id}</Text>
+                          <Badge value={route.status} />
+                        </View>
+                        <Text style={styles.mutedText}>{dateString(route.departureTime)} · {(route.distanceMeters / 1000).toFixed(1)} km · {route.driverName}</Text>
+                        {deliveries.map((stop) => {
+                          const shipment = goods.find((item) => item.id === stop.goodsId)
+                          return (
+                            <View key={`${route.id}-${stop.goodsId}`} style={styles.vehicleShipmentRow}>
+                              <Text style={styles.stopType}>{stop.trackingCode}</Text>
+                              <Text style={styles.bodyText}>{shipment?.clientName ?? 'Shipment'} · {stop.city}</Text>
+                              <Text style={styles.mutedText}>{shipment ? `${displayStatus(shipment.status)} · ${shipment.pickupCity} → ${shipment.deliveryCity}` : 'Shipment details unavailable'}</Text>
+                            </View>
+                          )
+                        })}
+                        {!deliveries.length ? <Text style={styles.mutedText}>No shipment stops recorded for this route.</Text> : null}
+                      </View>
+                    )
+                  }) : <Empty>No shipment history recorded for this vehicle.</Empty>
+                ) : null}
+                {fleetDetailTab === 'Maintenance' ? (
+                  <>
+                    {selectedFleetVehicle.maintenanceComponents.length ? selectedFleetVehicle.maintenanceComponents.map((component) => (
+                      <View key={component.key} style={styles.vehicleHistoryCard}>
+                        <View style={styles.headingRow}>
+                          <Text style={styles.bodyText}>{component.label}</Text>
+                          <Text style={styles.mutedText}>{component.healthPercent == null ? 'HISTORY ONLY' : `${Math.round(component.healthPercent)}% HEALTH`}</Text>
+                        </View>
+                        {component.healthPercent != null ? <View style={styles.healthTrack}><View style={[styles.healthBar, { width: `${Math.max(0, Math.min(100, component.healthPercent))}%` }]} /></View> : null}
+                        <Text style={styles.mutedText}>{component.lastPerformedAt ? `Last service: ${dateString(component.lastPerformedAt)}` : 'No service history recorded'}{component.lastOdometerKm == null ? '' : ` · ${component.lastOdometerKm.toLocaleString()} km`}{component.lastCostEur == null ? '' : ` · ${money(component.lastCostEur)}`}</Text>
+                        <Text style={styles.mutedText}>{component.distanceRemainingKm == null ? component.inspectionNote ?? 'No interval data' : `${component.distanceRemainingKm.toLocaleString()} km remaining`}{component.daysRemaining == null ? '' : ` · ${component.daysRemaining} days`}</Text>
+                        <LinkButton label="Record service" disabled={hasScheduledVehicleRoute(selectedFleetVehicle.id)} onPress={() => { setSelectedFleetVehicleId(null); openMaintenance(selectedFleetVehicle, component) }} />
+                      </View>
+                    )) : <Empty>No maintenance components recorded.</Empty>}
+                  </>
+                ) : null}
+                {fleetDetailTab === 'Profitability' ? (
+                  <View style={styles.vehicleHistoryCard}>
+                    <Text style={styles.stopType}>REPORTING PERIOD · {finance?.from ?? fromDate} — {finance?.to ?? toDate}</Text>
+                    {selectedVehicleProfitability ? (
+                      <>
+                        <DataRow label="Freight revenue" value={money(selectedVehicleProfitability.freightRevenueEur)} />
+                        <DataRow label="Maintenance costs" value={money(selectedVehicleProfitability.maintenanceCostsEur)} />
+                        <DataRow label="Net profit" value={money(selectedVehicleProfitability.netProfitEur)} />
+                        <Text style={styles.mutedText}>Net profit is delivered freight revenue less recorded maintenance. Fuel, wages, tolls, insurance, and other costs are excluded.</Text>
+                      </>
+                    ) : <Empty>{finance ? 'No financial activity recorded for this vehicle in the selected period.' : 'Profitability report is not available.'}</Empty>}
+                  </View>
+                ) : null}
               </ScrollView>
             ) : null}
           </View>
@@ -1533,6 +1661,13 @@ const styles = StyleSheet.create({
   linkText: { color: ACCENT, fontSize: 10, fontWeight: '700', fontFamily: 'monospace', textTransform: 'uppercase' },
   dangerLink: { color: '#f87171' },
   headingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  fleetSortOptions: { flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  fleetSortButton: { minHeight: 28, justifyContent: 'center', borderWidth: 1, borderColor: '#374151', paddingHorizontal: 7, backgroundColor: '#111416' },
+  fleetSortButtonSelected: { borderColor: ACCENT, backgroundColor: '#241d10' },
+  fleetSortText: { color: '#9ca3af', fontSize: 8, fontWeight: '700', fontFamily: 'monospace' },
+  fleetSortTextSelected: { color: ACCENT },
+  fleetPagination: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 8, borderTopWidth: 1, borderTopColor: '#2d333b', paddingTop: 9 },
+  fleetPageLabel: { color: '#f3f4f6', fontSize: 9, fontWeight: '700', fontFamily: 'monospace' },
   sectionIntro: { flex: 1, color: '#9ca3af', fontSize: 10 },
   actionGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   rowActions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginTop: 2 },
@@ -1565,6 +1700,13 @@ const styles = StyleSheet.create({
   modalScrim: { ...StyleSheet.absoluteFill, zIndex: 5, backgroundColor: 'rgba(0, 0, 0, .72)', justifyContent: 'flex-end' },
   modalFrame: { maxHeight: '90%', backgroundColor: '#161a1d', borderTopWidth: 1, borderColor: '#2d333b', paddingBottom: Platform.OS === 'ios' ? 26 : 10 },
   modalHeader: { minHeight: 54, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 17, backgroundColor: '#111416', borderBottomWidth: 1, borderColor: '#2d333b' },
+  detailTabs: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#2d333b', backgroundColor: '#111416' },
+  detailTab: { minHeight: 42, flex: 1, alignItems: 'center', justifyContent: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent', paddingHorizontal: 4 },
+  detailTabSelected: { borderBottomColor: ACCENT },
+  detailTabText: { color: '#9ca3af', fontSize: 8, fontWeight: '700', fontFamily: 'monospace', textTransform: 'uppercase' },
+  detailTabTextSelected: { color: ACCENT },
+  vehicleHistoryCard: { gap: 8, borderWidth: 1, borderColor: '#2d333b', padding: 11, backgroundColor: '#111416' },
+  vehicleShipmentRow: { gap: 4, borderTopWidth: 1, borderTopColor: '#2d333b', paddingTop: 8 },
   closeText: { color: '#9ca3af', fontSize: 26, paddingHorizontal: 5 },
   modalContent: { gap: 10, padding: 15, paddingBottom: 24 },
   choiceField: { gap: 6 },
