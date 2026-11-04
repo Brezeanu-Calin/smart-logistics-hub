@@ -17,6 +17,7 @@ import {
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context'
 import RouteMap from '../components/RouteMap'
 import DatePickerField from '../components/DatePickerField'
+import DateTimePickerField from '../components/DateTimePickerField'
 import {
   type AssistantAction,
   type AssistantMessage,
@@ -28,6 +29,7 @@ import {
   type Route,
   type RouteSimulationPosition,
   type Trailer,
+  type TrailerMaintenanceComponent,
   type Vehicle,
   type VehicleMaintenanceComponent,
   send,
@@ -36,19 +38,22 @@ import {
 
 type Tab = 'Home' | 'Routes' | 'Freight' | 'Drivers' | 'Fleet' | 'Service' | 'Finance'
 type SelectOption = { value: string; label: string; detail?: string }
-type FormKind = 'freight' | 'driver' | 'vehicle' | 'trailer' | 'route' | 'maintenance'
+type FormKind = 'freight' | 'driver' | 'vehicle' | 'trailer' | 'route' | 'maintenance' | 'trailerMaintenance'
 type FormModal = {
   kind: FormKind
   values: Record<string, string>
   editingId?: number
   vehicle?: Vehicle
+  trailer?: Trailer
   component?: VehicleMaintenanceComponent
+  trailerComponent?: TrailerMaintenanceComponent
 }
 type ChatLine = AssistantMessage & { action?: AssistantAction }
 
 const TABS: Tab[] = ['Home', 'Routes', 'Freight', 'Drivers', 'Fleet', 'Service', 'Finance']
 const ACCENT = '#f59e0b'
 const NAVY = '#111416'
+const MAX_OPERATIONAL_CONTEXT_BYTES = 150_000
 const GOODS_TYPES: GoodsType[] = [
   'GENERAL', 'REFRIGERATED', 'HAZARDOUS', 'OVERSIZED', 'BULK',
   'LIQUID', 'CONTAINERIZED', 'VEHICLES', 'LIVESTOCK',
@@ -68,6 +73,10 @@ const dateInputValue = (value: Date) => {
   const month = String(value.getMonth() + 1).padStart(2, '0')
   const day = String(value.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+const dateTimeInputValue = (value: Date) => {
+  const adjusted = new Date(value.getTime() - value.getTimezoneOffset() * 60_000)
+  return adjusted.toISOString().slice(0, 16)
 }
 const money = (value: number | null | undefined) =>
   value == null ? 'Not recorded' : `€${value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -111,6 +120,7 @@ function MobileApp() {
   const [chatBusy, setChatBusy] = useState(false)
   const [pendingAction, setPendingAction] = useState<AssistantAction | null>(null)
   const [assistantOpen, setAssistantOpen] = useState(false)
+  const [expandedHealth, setExpandedHealth] = useState<Record<string, boolean>>({})
 
   const setTab = (nextTab: Tab) => {
     router.setParams({ screen: nextTab.toLowerCase() })
@@ -163,6 +173,15 @@ function MobileApp() {
     return () => clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    if (!error && !notice) return
+    const timer = setTimeout(() => {
+      setError('')
+      setNotice('')
+    }, 5000)
+    return () => clearTimeout(timer)
+  }, [error, notice])
+
   const counts = useMemo(() => ({
     activeRoutes: routes.filter((route) => route.status === 'ACTIVE').length,
     availableDrivers: drivers.filter((driver) => driver.status === 'AVAILABLE'
@@ -192,6 +211,21 @@ function MobileApp() {
     setModal({ kind, values: toFormValues(value), ...extra })
   }
 
+  function editRoute(route: Route) {
+    const departure = new Date(route.departureTime)
+    openForm('route', {
+      departureTime: dateTimeInputValue(departure),
+      driverId: route.driverId,
+      vehicleId: route.vehicleId,
+      trailerId: route.trailerId ?? '',
+      goodsIds: route.stops
+        .filter((stop) => stop.type === 'PICKUP')
+        .sort((first, second) => first.stopOrder - second.stopOrder)
+        .map((stop) => stop.goodsId)
+        .join(','),
+    }, { editingId: route.id })
+  }
+
   async function mutate(action: () => Promise<unknown>, message: string) {
     setBusy(true)
     setError('')
@@ -209,7 +243,10 @@ function MobileApp() {
   }
 
   function updateField(key: string, value: string) {
-    setModal((current) => current ? { ...current, values: { ...current.values, [key]: value } } : current)
+    setModal((current) => current ? {
+      ...current,
+      values: { ...current.values, [key]: value, ...(key === 'vehicleId' ? { trailerId: '' } : {}) },
+    } : current)
   }
 
   async function saveForm() {
@@ -229,7 +266,7 @@ function MobileApp() {
     switch (modal.kind) {
       case 'freight': {
         const revenueText = text('revenueEur')
-        const revenueEur = revenueText ? Number(revenueText) : null
+        const revenueEur = revenueText ? Number(revenueText) : Number.NaN
         const weightKg = number('weightKg')
         const volumeM3 = number('volumeM3')
         if (!text('clientName') || text('clientName').length > 150
@@ -247,10 +284,10 @@ function MobileApp() {
           invalid('Weight and volume must be finite values greater than zero.')
           return
         }
-        if (revenueEur !== null && (!Number.isFinite(revenueEur) || revenueEur < 0
+        if (!revenueText || !Number.isFinite(revenueEur) || revenueEur < 0
           || revenueEur > 9_999_999_999.99
-          || !/^\d+(\.\d{1,2})?$/.test(revenueText))) {
-          invalid('Freight revenue must be between €0 and €9,999,999,999.99 with at most two decimals, or left blank.')
+          || !/^\d+(\.\d{1,2})?$/.test(revenueText)) {
+          invalid('Freight revenue is required and must be between €0 and €9,999,999,999.99 with at most two decimals.')
           return
         }
         path = id === undefined ? '/goods' : `/goods/${id}`
@@ -370,7 +407,9 @@ function MobileApp() {
           setError('Select between 1 and 12 unassigned freight items.')
           return
         }
-        if (ids.some((goodsId) => !goods.some((item) => item.id === goodsId && item.status === 'UNASSIGNED'))) {
+        const routeGoodsIds = new Set(routes.find((route) => route.id === id)?.stops.map((stop) => stop.goodsId) ?? [])
+        if (ids.some((goodsId) => !goods.some((item) => item.id === goodsId
+          && (item.status === 'UNASSIGNED' || routeGoodsIds.has(goodsId))))) {
           setError('One or more selected freight items are no longer unassigned. Refresh and choose again.')
           return
         }
@@ -383,14 +422,14 @@ function MobileApp() {
           return
         }
         if (!drivers.some((item) => item.id === driverId && item.status === 'AVAILABLE'
-          && !routes.some((route) => route.driverId === driverId
+          && !routes.some((route) => route.id !== id && route.driverId === driverId
             && (route.status === 'PLANNED' || route.status === 'ACTIVE')))) {
           setError('Select an available driver.')
           return
         }
         if (!vehicles.some((item) => item.id === vehicleId
           && item.status === 'AVAILABLE' && !item.maintenanceAutoTriggered
-          && !routes.some((route) => route.vehicleId === vehicleId
+          && !routes.some((route) => route.id !== id && route.vehicleId === vehicleId
             && (route.status === 'PLANNED' || route.status === 'ACTIVE')))) {
           setError('Select an available vehicle.')
           return
@@ -411,7 +450,7 @@ function MobileApp() {
         }
         if (trailerId !== null && !trailers.some((item) => item.id === trailerId
           && item.status === 'AVAILABLE'
-          && !routes.some((route) => route.trailerId === trailerId
+          && !routes.some((route) => route.id !== id && route.trailerId === trailerId
             && (route.status === 'PLANNED' || route.status === 'ACTIVE')))) {
           setError('Select an available trailer or choose No trailer.')
           return
@@ -428,7 +467,9 @@ function MobileApp() {
         const vehicleFits = totalWeight <= vehicle.maxWeightCapacityKg && totalVolume <= vehicle.maxVolumeM3
         const trailerRequired = vehicle.vehicleType === 'ARTICULATED_TRUCK' || !vehicleFits || specializedCargo
         if (trailerRequired && trailerId === null) {
-          invalid('A compatible trailer is required for this vehicle or freight load.')
+          invalid(vehicle.vehicleType === 'ARTICULATED_TRUCK'
+            ? 'Select an articulated-truck trailer before planning this route.'
+            : 'A compatible trailer is required for this vehicle or freight load.')
           return
         }
         if (trailerId !== null) {
@@ -460,7 +501,7 @@ function MobileApp() {
             return
           }
         }
-        path = '/routes'
+        path = id === undefined ? '/routes' : `/routes/${id}`
         payload = {
           driverId,
           vehicleId,
@@ -501,6 +542,31 @@ function MobileApp() {
           }
         }
         break
+      case 'trailerMaintenance':
+        if (!modal.trailer || !modal.trailerComponent) {
+          invalid('The selected trailer maintenance component is unavailable. Refresh and try again.')
+          return
+        }
+        {
+          const performedAt = new Date(values.performedAt ?? '')
+          const costText = text('costEur')
+          const costEur = costText ? Number(costText) : null
+          if (!Number.isFinite(performedAt.getTime()) || performedAt.getTime() > Date.now()
+            || (costEur !== null && (!Number.isFinite(costEur) || costEur < 0
+              || costEur > 9_999_999_999.99
+              || !/^\d+(\.\d{1,2})?$/.test(costText)))) {
+            invalid('Enter a past or current service date and an optional cost from €0 to €9,999,999,999.99 with at most two decimals.')
+            return
+          }
+          path = `/trailers/${modal.trailer.id}/maintenance`
+          method = 'POST'
+          payload = {
+            componentKey: modal.trailerComponent.key,
+            performedAt: performedAt.toISOString(),
+            costEur,
+          }
+        }
+        break
     }
 
     await mutate(() => send(path, method, payload), `${modal.kind[0]?.toUpperCase()}${modal.kind.slice(1)} ${id === undefined ? 'added' : 'updated'}.`)
@@ -508,10 +574,17 @@ function MobileApp() {
 
   function openMaintenance(vehicle: Vehicle, component: VehicleMaintenanceComponent) {
     openForm('maintenance', {
-      performedAt: new Date().toISOString(),
+      performedAt: dateTimeInputValue(new Date()),
       odometerKm: vehicle.currentMileageKm,
       costEur: '',
     }, { vehicle, component })
+  }
+
+  function openTrailerMaintenance(trailer: Trailer, component: TrailerMaintenanceComponent) {
+    openForm('trailerMaintenance', {
+      performedAt: dateTimeInputValue(new Date()),
+      costEur: '',
+    }, { trailer, trailerComponent: component })
   }
 
   async function sendAssistantMessage() {
@@ -525,9 +598,13 @@ function MobileApp() {
     setChatBusy(true)
     setError('')
     try {
+      const context = { drivers, vehicles, trailers, goods, routes }
+      if (new TextEncoder().encode(JSON.stringify(context)).byteLength > MAX_OPERATIONAL_CONTEXT_BYTES) {
+        throw new Error('Operational context must be a JSON object no larger than 150 KB.')
+      }
       const reply = await send<AssistantReply>('/assistant/chat', 'POST', {
         messages: history,
-        context: { drivers, vehicles, trailers, goods, routes },
+        context,
       })
       setChat((current) => [...current, { role: 'assistant', content: reply.message, ...(reply.action ? { action: reply.action } : {}) }])
       setPendingAction(reply.action)
@@ -667,13 +744,13 @@ function MobileApp() {
 
         {tab === 'Routes' && (
           <>
-            <View style={styles.headingRow}><Text style={styles.sectionIntro}>Saved routes, stop order, and route-map simulation.</Text><Button label="+ Plan" onPress={() => openForm('route', { departureTime: new Date(Date.now() + 60_000).toISOString(), goodsIds: '' })} /></View>
+            <View style={styles.headingRow}><Text style={styles.sectionIntro}>Saved routes, stop order, and route-map simulation.</Text><Button label="+ Plan" onPress={() => openForm('route', { departureTime: dateTimeInputValue(new Date(Date.now() + 60_000)), goodsIds: '' })} /></View>
             <Card title="Active route map" subtitle="Positions are simulated from saved road geometry, not GPS.">
               {routes.filter((route) => route.status === 'ACTIVE').length === 0
                 ? <Empty>No active routes.</Empty>
                 : routes.filter((route) => route.status === 'ACTIVE').map((route) => <RouteMapCard key={route.id} route={route} position={simulationPositions[route.id]} />)}
             </Card>
-            {routes.map((route) => <RouteCard key={route.id} route={route} goods={goods} onAction={handleRouteAction} expanded />)}
+            {routes.map((route) => <RouteCard key={route.id} route={route} goods={goods} onAction={handleRouteAction} onEdit={editRoute} expanded />)}
           </>
         )}
 
@@ -766,6 +843,7 @@ function MobileApp() {
                   {!hasTrailerHistory(trailer.id) && trailer.status !== 'IN_TRANSIT'
                     ? <LinkButton label="Delete" danger onPress={() => confirm('Delete trailer?', `Delete ${trailer.licensePlate}?`, () => void mutate(() => send(`/trailers/${trailer.id}`, 'DELETE'), 'Trailer deleted.'))} />
                     : null}
+                  <LinkButton label="Service" onPress={() => setTab('Service')} />
                 </View>
               </Card>
             ))}
@@ -785,13 +863,63 @@ function MobileApp() {
               <Card key={vehicle.id} title={`${vehicle.licensePlate} · ${vehicle.make} ${vehicle.model}`} trailing={<Badge value={vehicle.status} />}>
                 {vehicle.maintenanceComponents.map((component) => (
                   <View key={component.key} style={styles.componentRow}>
-                    <View style={styles.componentHeading}><Text style={styles.bodyText}>{component.label}</Text><Text style={styles.mutedText}>{component.healthPercent == null ? component.inspectionNote ?? 'No fixed interval' : `${Math.round(component.healthPercent)}%`}</Text></View>
-                    {component.healthPercent != null ? <View style={styles.healthTrack}><View style={[styles.healthBar, { width: `${Math.max(0, Math.min(100, component.healthPercent))}%` }]} /></View> : null}
-                    <Text style={styles.mutedText}>{component.distanceRemainingKm == null ? '' : `${component.distanceRemainingKm.toLocaleString()} km remaining`}{component.daysRemaining == null ? '' : ` · ${component.daysRemaining} days`}</Text>
-                    <LinkButton label="Record service" onPress={() => openMaintenance(vehicle, component)} />
+                    <Pressable
+                      style={styles.componentHeading}
+                      onPress={() => setExpandedHealth((current) => ({ ...current, [`vehicle-${vehicle.id}-${component.key}`]: !current[`vehicle-${vehicle.id}-${component.key}`] }))}
+                      accessibilityRole="button"
+                      accessibilityState={{ expanded: Boolean(expandedHealth[`vehicle-${vehicle.id}-${component.key}`]) }}
+                    >
+                      <Text style={styles.bodyText}>{component.label}</Text>
+                      <Text style={styles.mutedText}>{expandedHealth[`vehicle-${vehicle.id}-${component.key}`] ? '⌄' : '›'}</Text>
+                    </Pressable>
+                    {expandedHealth[`vehicle-${vehicle.id}-${component.key}`] ? (
+                      <>
+                        <Text style={styles.mutedText}>{component.healthPercent == null ? component.inspectionNote ?? 'No fixed interval' : `${Math.round(component.healthPercent)}% health`}</Text>
+                        {component.healthPercent != null ? <View style={styles.healthTrack}><View style={[styles.healthBar, { width: `${Math.max(0, Math.min(100, component.healthPercent))}%` }]} /></View> : null}
+                        <Text style={styles.mutedText}>{component.distanceRemainingKm == null ? '' : `${component.distanceRemainingKm.toLocaleString()} km remaining`}{component.daysRemaining == null ? '' : ` · ${component.daysRemaining} days`}</Text>
+                        {component.lastPerformedAt ? <Text style={styles.mutedText}>Last service: {dateString(component.lastPerformedAt)}{component.lastCostEur == null ? '' : ` · ${money(component.lastCostEur)}`}</Text> : <Text style={styles.mutedText}>No service history recorded.</Text>}
+                        <LinkButton label="Record service" disabled={hasScheduledVehicleRoute(vehicle.id)} onPress={() => openMaintenance(vehicle, component)} />
+                      </>
+                    ) : null}
                   </View>
                 ))}
                 {vehicle.status === 'MAINTENANCE' && <Button label="Mark vehicle available" secondary onPress={() => confirm('Mark available?', 'Tracked service health will be reset at the current mileage.', () => void mutate(() => send(`/vehicles/${vehicle.id}/status`, 'PATCH', { status: 'AVAILABLE' }), 'Vehicle marked available.'))} />}
+              </Card>
+            ))}
+            <Text style={styles.subheading}>Trailer service ({trailers.length})</Text>
+            {trailers.map((trailer) => (
+              <Card key={`service-${trailer.id}`} title={`${trailer.licensePlate} · ${trailer.make} ${trailer.model}`} trailing={<Badge value={trailer.status} />}>
+                {trailer.maintenanceComponents.map((component) => {
+                  const key = `trailer-${trailer.id}-${component.key}`
+                  const expanded = Boolean(expandedHealth[key])
+                  return (
+                    <View key={component.key} style={styles.componentRow}>
+                      <Pressable
+                        style={styles.componentHeading}
+                        onPress={() => setExpandedHealth((current) => ({ ...current, [key]: !current[key] }))}
+                        accessibilityRole="button"
+                        accessibilityState={{ expanded }}
+                      >
+                        <Text style={styles.bodyText}>{component.label}</Text>
+                        <Text style={styles.mutedText}>{expanded ? '⌄' : '›'}</Text>
+                      </Pressable>
+                      {expanded ? (
+                        <>
+                          <Text style={styles.mutedText}>{component.healthPercent == null ? 'No service history' : `${Math.round(component.healthPercent)}% health · ${component.daysRemaining ?? 0} days remaining`}</Text>
+                          {component.healthPercent != null ? <View style={styles.healthTrack}><View style={[styles.healthBar, { width: `${Math.max(0, Math.min(100, component.healthPercent))}%` }]} /></View> : null}
+                          <Text style={styles.mutedText}>Annual service interval{component.lastPerformedAt ? ` · Last service ${dateString(component.lastPerformedAt)}` : ''}{component.lastCostEur == null ? '' : ` · ${money(component.lastCostEur)}`}</Text>
+                          <LinkButton label="Record trailer service" disabled={hasScheduledTrailerRoute(trailer.id)} onPress={() => openTrailerMaintenance(trailer, component)} />
+                        </>
+                      ) : null}
+                    </View>
+                  )
+                })}
+                {trailer.maintenanceHistory.length
+                  ? <Text style={styles.mutedText}>Recent service: {trailer.maintenanceHistory.slice(0, 3).map((operation) => `${operation.componentLabel} · ${dateString(operation.performedAt)}`).join(' | ')}</Text>
+                  : <Text style={styles.mutedText}>No trailer service history recorded.</Text>}
+                {trailer.status === 'MAINTENANCE'
+                  ? <Button label="Mark trailer available" secondary onPress={() => confirm('Mark available?', 'Confirm trailer service is complete?', () => void mutate(() => send(`/trailers/${trailer.id}/status`, 'PATCH', { status: 'AVAILABLE' }), 'Trailer marked available.'))} />
+                  : null}
               </Card>
             ))}
             {!vehicles.length && <Empty>No vehicle maintenance data.</Empty>}
@@ -932,8 +1060,8 @@ function Button({ label, onPress, secondary, danger, disabled }: { label: string
   return <Pressable onPress={onPress} disabled={disabled} style={[styles.button, secondary && styles.secondaryButton, danger && styles.dangerButton, disabled && styles.disabledButton]}><Text style={[styles.buttonText, secondary && styles.secondaryButtonText, danger && styles.dangerButtonText]}>{label}</Text></Pressable>
 }
 
-function LinkButton({ label, onPress, danger }: { label: string; onPress: () => void; danger?: boolean }) {
-  return <Pressable onPress={onPress} style={styles.linkButton}><Text style={[styles.linkText, danger && styles.dangerLink]}>{label}</Text></Pressable>
+function LinkButton({ label, onPress, danger, disabled }: { label: string; onPress: () => void; danger?: boolean; disabled?: boolean }) {
+  return <Pressable onPress={onPress} disabled={disabled} style={[styles.linkButton, disabled && styles.disabledButton]}><Text style={[styles.linkText, danger && styles.dangerLink]}>{label}</Text></Pressable>
 }
 
 function SearchInput({ value, onChangeText, placeholder }: { value: string; onChangeText: (value: string) => void; placeholder: string }) {
@@ -1016,7 +1144,7 @@ function RouteMapCard({ route, position }: { route: Route; position?: RouteSimul
   )
 }
 
-function RouteCard({ route, goods, onAction, expanded }: { route: Route; goods: Goods[]; onAction: (route: Route, action: 'start' | 'cancel' | 'delete' | 'deliver', goodsId?: number) => void; expanded?: boolean }) {
+function RouteCard({ route, goods, onAction, onEdit, expanded }: { route: Route; goods: Goods[]; onAction: (route: Route, action: 'start' | 'cancel' | 'delete' | 'deliver', goodsId?: number) => void; onEdit?: (route: Route) => void; expanded?: boolean }) {
   const pendingDeliveries = route.stops.filter((stop) =>
     stop.type === 'DELIVERY'
     && goods.find((item) => item.id === stop.goodsId)?.status === 'IN_TRANSIT'
@@ -1040,7 +1168,7 @@ function RouteCard({ route, goods, onAction, expanded }: { route: Route; goods: 
           ))}
         </View>
       ) : null}
-      {route.status === 'PLANNED' ? <View style={styles.rowActions}><Button label="Start route" onPress={() => onAction(route, 'start')} /><Button label="Cancel" secondary onPress={() => onAction(route, 'cancel')} /><LinkButton label="Delete" danger onPress={() => onAction(route, 'delete')} /></View> : null}
+      {route.status === 'PLANNED' ? <View style={styles.rowActions}>{onEdit ? <LinkButton label="Edit route" onPress={() => onEdit(route)} /> : null}<Button label="Start route" onPress={() => onAction(route, 'start')} /><Button label="Cancel" secondary onPress={() => onAction(route, 'cancel')} /><LinkButton label="Delete" danger onPress={() => onAction(route, 'delete')} /></View> : null}
       {route.status === 'CANCELLED' && (!route.estimatedReturnTime || route.returnedAt)
         ? <View style={styles.rowActions}><LinkButton label="Delete" danger onPress={() => onAction(route, 'delete')} /></View>
         : null}
@@ -1066,7 +1194,7 @@ function FormEditor({ modal, busy, error, onChange, onClose, onSave, drivers, ve
     freight: [
       { key: 'clientName', label: 'Client' }, { key: 'goodsType', label: 'Freight type', options: GOODS_TYPES },
       { key: 'description', label: 'Description' }, { key: 'weightKg', label: 'Weight (kg)', keyboard: 'decimal-pad' },
-      { key: 'volumeM3', label: 'Volume (m³)', keyboard: 'decimal-pad' }, { key: 'revenueEur', label: 'Revenue (€; optional)', keyboard: 'decimal-pad' },
+      { key: 'volumeM3', label: 'Volume (m³)', keyboard: 'decimal-pad' }, { key: 'revenueEur', label: 'Revenue (€)', keyboard: 'decimal-pad' },
       { key: 'pickupCity', label: 'Pickup city' }, { key: 'deliveryCity', label: 'Delivery city' },
     ],
     driver: [
@@ -1085,34 +1213,51 @@ function FormEditor({ modal, busy, error, onChange, onClose, onSave, drivers, ve
       { key: 'make', label: 'Make' }, { key: 'model', label: 'Model' }, { key: 'year', label: 'Year', keyboard: 'numeric' },
       { key: 'maxWeightCapacityKg', label: 'Max weight capacity (kg)', keyboard: 'decimal-pad' }, { key: 'maxVolumeM3', label: 'Max volume (m³)', keyboard: 'decimal-pad' },
     ],
-    route: [{ key: 'departureTime', label: 'Departure date/time (ISO 8601)' }],
+    route: [{ key: 'departureTime', label: 'Departure date and time' }],
     maintenance: [
-      { key: 'performedAt', label: 'Service date/time (ISO 8601)' },
+      { key: 'performedAt', label: 'Service date and time' },
       { key: 'odometerKm', label: 'Odometer (km)', keyboard: 'numeric' },
       { key: 'costEur', label: 'Service cost (€; optional)', keyboard: 'decimal-pad' },
     ],
+    trailerMaintenance: [
+      { key: 'performedAt', label: 'Service date and time' },
+      { key: 'costEur', label: 'Service cost (€; optional)', keyboard: 'decimal-pad' },
+    ],
   }
-  const title = modal.kind === 'maintenance'
-    ? `Record ${modal.component?.label ?? 'service'} · ${modal.vehicle?.licensePlate ?? ''}`
+  const title = modal.kind === 'maintenance' || modal.kind === 'trailerMaintenance'
+    ? `Record ${modal.component?.label ?? modal.trailerComponent?.label ?? 'service'} · ${modal.vehicle?.licensePlate ?? modal.trailer?.licensePlate ?? ''}`
     : `${modal.editingId === undefined ? 'Add' : 'Edit'} ${modal.kind}`
   const availableDrivers = drivers
     .filter((driver) => driver.status === 'AVAILABLE'
-      && !routes.some((route) => route.driverId === driver.id
+      && !routes.some((route) => route.id !== modal.editingId && route.driverId === driver.id
         && (route.status === 'PLANNED' || route.status === 'ACTIVE')))
     .map((driver) => ({ value: String(driver.id), label: driver.name, detail: `${driver.email} · ${driver.licenseCategories.join(', ') || 'No license categories'}` }))
   const availableVehicles = vehicles
     .filter((vehicle) => vehicle.status === 'AVAILABLE' && !vehicle.maintenanceAutoTriggered
-      && !routes.some((route) => route.vehicleId === vehicle.id
+      && !routes.some((route) => route.id !== modal.editingId && route.vehicleId === vehicle.id
         && (route.status === 'PLANNED' || route.status === 'ACTIVE')))
     .map((vehicle) => ({ value: String(vehicle.id), label: vehicle.licensePlate, detail: `${vehicle.make} ${vehicle.model} · ${displayStatus(vehicle.vehicleType)}` }))
   const availableTrailers = trailers
     .filter((trailer) => trailer.status === 'AVAILABLE'
-      && !routes.some((route) => route.trailerId === trailer.id
+      && trailer.compatibleVehicleType === vehicles.find((vehicle) => vehicle.id === Number(modal.values.vehicleId))?.vehicleType
+      && !routes.some((route) => route.id !== modal.editingId && route.trailerId === trailer.id
         && (route.status === 'PLANNED' || route.status === 'ACTIVE')))
     .map((trailer) => ({ value: String(trailer.id), label: trailer.licensePlate, detail: `${trailer.make} ${trailer.model} · ${displayStatus(trailer.trailerType)}` }))
   const unassignedFreight = goods
-    .filter((item) => item.status === 'UNASSIGNED')
+    .filter((item) => item.status === 'UNASSIGNED'
+      || (modal.editingId !== undefined
+        && routes.find((route) => route.id === modal.editingId)?.stops.some((stop) => stop.goodsId === item.id)))
     .map((item) => ({ value: String(item.id), label: `${item.trackingCode} · ${item.clientName}`, detail: `${item.pickupCity} → ${item.deliveryCity} · ${displayStatus(item.goodsType)}` }))
+  const selectedFreight = (modal.values.goodsIds ?? '').split(',').filter(Boolean)
+    .map((id) => goods.find((item) => item.id === Number(id)))
+    .filter((item): item is Goods => item !== undefined)
+  const selectedVehicle = vehicles.find((vehicle) => vehicle.id === Number(modal.values.vehicleId))
+  const routeTrailerRequired = Boolean(selectedVehicle && (
+    selectedVehicle.vehicleType === 'ARTICULATED_TRUCK'
+    || selectedFreight.reduce((total, item) => total + item.weightKg, 0) > selectedVehicle.maxWeightCapacityKg
+    || selectedFreight.reduce((total, item) => total + item.volumeM3, 0) > selectedVehicle.maxVolumeM3
+    || selectedFreight.some((item) => item.goodsType !== 'GENERAL')
+  ))
 
   return (
     <View style={styles.modalScrim}>
@@ -1138,10 +1283,11 @@ function FormEditor({ modal, busy, error, onChange, onClose, onSave, drivers, ve
                 emptyLabel="No available vehicles."
               />
               <ChoiceField
-                label="Trailer (optional)"
-                options={[{ value: '', label: 'No trailer', detail: 'Continue without a trailer' }, ...availableTrailers]}
+                label={routeTrailerRequired ? 'Trailer (required)' : 'Trailer (optional)'}
+                options={[...(routeTrailerRequired ? [] : [{ value: '', label: 'No trailer', detail: 'Continue without a trailer' }]), ...availableTrailers]}
                 selectedValues={[modal.values.trailerId ?? '']}
                 onChange={(selected) => onChange('trailerId', selected[0] ?? '')}
+                emptyLabel={routeTrailerRequired ? 'No compatible trailer available. Add one in Fleet.' : undefined}
               />
               <ChoiceField
                 label="Freight (select 1–12)"
@@ -1165,7 +1311,9 @@ function FormEditor({ modal, busy, error, onChange, onClose, onSave, drivers, ve
                     </View>
                   </ScrollView>
                 </View>
-              ) : <Field label={field.label} value={modal.values[field.key] ?? ''} onChangeText={(value) => onChange(field.key, value)} keyboardType={field.keyboard} />}
+              ) : field.key === 'departureTime' || field.key === 'performedAt'
+                ? <DateTimePickerField label={field.label} value={modal.values[field.key] ?? ''} onChange={(value) => onChange(field.key, value)} />
+                : <Field label={field.label} value={modal.values[field.key] ?? ''} onChangeText={(value) => onChange(field.key, value)} keyboardType={field.keyboard} />}
             </View>
           ))}
           {error ? <Text style={styles.formError}>{error}</Text> : null}

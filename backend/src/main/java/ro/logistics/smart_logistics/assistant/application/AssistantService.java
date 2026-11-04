@@ -17,12 +17,14 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
 @Service
 public class AssistantService {
+    private static final int MAX_OPERATIONAL_CONTEXT_BYTES = 150_000;
     private static final Set<String> ALLOWED_ACTION_TYPES = Set.of(
             "CREATE_DRIVER", "UPDATE_DRIVER", "DELETE_DRIVER", "SET_DRIVER_STATUS",
             "CREATE_VEHICLE", "UPDATE_VEHICLE", "DELETE_VEHICLE", "SET_VEHICLE_STATUS",
@@ -114,7 +116,8 @@ public class AssistantService {
     }
 
     public AssistantChatResponse chat(AssistantChatRequest request) {
-        if (!request.context().isObject() || request.context().toString().length() > 150_000) {
+        if (!request.context().isObject()
+                || request.context().toString().getBytes(StandardCharsets.UTF_8).length > MAX_OPERATIONAL_CONTEXT_BYTES) {
             throw new InvalidAssistantRequestException(
                     "Operational context must be a JSON object no larger than 150 KB."
             );

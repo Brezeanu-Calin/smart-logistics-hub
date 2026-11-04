@@ -98,7 +98,10 @@ public class ApiExceptionHandler {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }
 
-    @ExceptionHandler({InvalidTrailerStatusException.class, InvalidTrailerConfigurationException.class})
+    @ExceptionHandler({
+            InvalidTrailerStatusException.class,
+            InvalidTrailerConfigurationException.class
+    })
     public ResponseEntity<ApiError> handleInvalidTrailerStatus(RuntimeException exception) {
         return response(HttpStatus.BAD_REQUEST, exception.getMessage(), Map.of());
     }

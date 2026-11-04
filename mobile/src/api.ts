@@ -63,6 +63,25 @@ export interface Trailer {
   maxWeightCapacityKg: number
   maxVolumeM3: number
   status: Status
+  maintenanceComponents: TrailerMaintenanceComponent[]
+  maintenanceHistory: TrailerMaintenanceRecord[]
+}
+
+export interface TrailerMaintenanceComponent {
+  key: string
+  label: string
+  serviceIntervalMonths: number
+  lastPerformedAt: string | null
+  healthPercent: number | null
+  daysRemaining: number | null
+  lastCostEur: number | null
+}
+
+export interface TrailerMaintenanceRecord {
+  componentKey: string
+  componentLabel: string
+  performedAt: string
+  costEur: number | null
 }
 
 export interface Goods {

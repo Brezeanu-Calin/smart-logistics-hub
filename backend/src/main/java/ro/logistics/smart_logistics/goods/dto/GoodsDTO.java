@@ -15,7 +15,7 @@ public record GoodsDTO(
         @NotNull GoodsType goodsType,
         @Size(max = 1000) String description,
         @NotNull @DecimalMin(value = "0.0", inclusive = false) Double weightKg,
-        @DecimalMin(value = "0.00") @Digits(integer = 10, fraction = 2) BigDecimal revenueEur,
+        @NotNull @DecimalMin(value = "0.00") @Digits(integer = 10, fraction = 2) BigDecimal revenueEur,
         @NotNull @DecimalMin(value = "0.0", inclusive = false) Double volumeM3,
         @NotBlank @Size(max = 500) String pickupCity,
         @NotBlank @Size(max = 500) String deliveryCity

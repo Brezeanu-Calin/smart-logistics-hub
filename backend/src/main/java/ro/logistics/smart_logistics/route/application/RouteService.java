@@ -202,7 +202,8 @@ public class RouteService {
                 totalVolume,
                 request.departureTime(),
                 estimatedReturnTime,
-                request.trailerId()
+                request.trailerId(),
+                null
         );
         ensureDriverLicense(driver, vehicle.getVehicleType(), trailer != null);
 
@@ -230,6 +231,126 @@ public class RouteService {
             ));
         }
         goods.forEach(Goods::assignToRoute);
+        return toResponse(routeRepository.saveAndFlush(route));
+    }
+
+    public RouteResponse updatePlanned(@Positive Long id, @Valid RouteCreateRequest request) {
+        if (request == null) {
+            throw new InvalidRouteException("Route details are required.");
+        }
+        Route route = findRouteForMutation(id);
+        if (route.getStatus() != RouteStatus.PLANNED) {
+            throw new RouteConflictException("Only planned routes can be edited.");
+        }
+        validateDepartureTime(request.departureTime());
+        Set<Long> requestedGoodsIds = validateStops(request.stops());
+        Set<Long> originalGoodsIds = route.getGoods().stream()
+                .map(Goods::getId)
+                .collect(Collectors.toSet());
+        List<Long> allGoodsIds = java.util.stream.Stream.concat(
+                        originalGoodsIds.stream(), requestedGoodsIds.stream())
+                .distinct()
+                .sorted()
+                .toList();
+        List<Goods> goods = goodsRepository.findAllByIdForUpdate(allGoodsIds);
+        if (goods.size() != allGoodsIds.size()) {
+            Set<Long> foundIds = goods.stream().map(Goods::getId).collect(Collectors.toSet());
+            Long missingId = allGoodsIds.stream().filter(goodsId -> !foundIds.contains(goodsId)).findFirst().orElseThrow();
+            throw new GoodsNotFoundException(missingId);
+        }
+        Map<Long, Goods> goodsById = goods.stream().collect(Collectors.toMap(Goods::getId, Function.identity()));
+        for (Long goodsId : requestedGoodsIds) {
+            Goods good = goodsById.get(goodsId);
+            if (good.getStatus() != GoodsStatus.UNASSIGNED
+                    && !(originalGoodsIds.contains(goodsId) && good.getStatus() == GoodsStatus.ASSIGNED)) {
+                throw new RouteConflictException(
+                        "Goods " + goodsId + " is no longer available for this route."
+                );
+            }
+        }
+
+        List<String> cities = request.stops().stream()
+                .map(stop -> cityFor(goodsById.get(stop.goodsId()), stop.type()))
+                .toList();
+        RouteTravelEstimate estimate = directionsService.estimate(cities);
+        if (estimate == null || estimate.stopCoordinates() == null
+                || estimate.stopCoordinates().size() != request.stops().size()
+                || estimate.geometry() == null || estimate.geometry().size() < 2
+                || estimate.distanceMeters() <= 0
+                || estimate.drivingDuration() == null || estimate.drivingDuration().isNegative()
+                || estimate.drivingDuration().isZero()
+                || estimate.returnDuration() == null || estimate.returnDuration().isNegative()) {
+            throw new RoutingUnavailableException("The routing service returned an incomplete route estimate.");
+        }
+
+        Driver driver = lockDriver(request.driverId());
+        Vehicle vehicle = lockVehicle(request.vehicleId());
+        List<Goods> selectedGoods = requestedGoodsIds.stream().map(goodsById::get).toList();
+        ensureResourcesEligibleForPlanning(driver, vehicle);
+        OffsetDateTime estimatedArrivalTime = request.departureTime().plus(estimate.drivingDuration());
+        validateSchedule(request.departureTime(), estimatedArrivalTime);
+        OffsetDateTime estimatedReturnTime = estimatedArrivalTime.plus(estimate.returnDuration());
+        ensureNoScheduleOverlapExcludingRoute(
+                route.getId(),
+                driver.getId(),
+                vehicle.getId(),
+                request.departureTime(),
+                estimatedReturnTime
+        );
+
+        BigDecimal totalWeight = selectedGoods.stream()
+                .map(item -> BigDecimal.valueOf(item.getWeightKg()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal totalVolume = selectedGoods.stream()
+                .map(item -> BigDecimal.valueOf(item.getVolumeM3()))
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        Trailer trailer = selectTrailer(
+                vehicle,
+                selectedGoods,
+                totalWeight,
+                totalVolume,
+                request.departureTime(),
+                estimatedReturnTime,
+                request.trailerId(),
+                route.getId()
+        );
+        ensureDriverLicense(driver, vehicle.getVehicleType(), trailer != null);
+
+        Set<Long> requestedGoodsSet = Set.copyOf(requestedGoodsIds);
+        goods.stream()
+                .filter(good -> originalGoodsIds.contains(good.getId()) && !requestedGoodsSet.contains(good.getId()))
+                .filter(good -> good.getStatus() == GoodsStatus.ASSIGNED)
+                .forEach(Goods::releaseFromRoute);
+        selectedGoods.stream()
+                .filter(good -> good.getStatus() == GoodsStatus.UNASSIGNED)
+                .forEach(Goods::assignToRoute);
+
+        route.updatePlannedDetails(
+                driver,
+                vehicle,
+                trailer,
+                request.departureTime(),
+                estimatedArrivalTime,
+                estimate.distanceMeters(),
+                estimate.drivingDuration().toSeconds(),
+                estimate.returnDuration().toSeconds()
+        );
+        route.clearStops();
+        route.clearGeometryPoints();
+        entityManager.flush();
+        for (RouteCoordinate coordinate : estimate.geometry()) {
+            route.addGeometryPoint(coordinate.latitude(), coordinate.longitude());
+        }
+        for (int index = 0; index < request.stops().size(); index++) {
+            RouteStopRequest stop = request.stops().get(index);
+            route.addStop(new RouteStop(
+                    goodsById.get(stop.goodsId()),
+                    stop.type(),
+                    index + 1,
+                    estimate.stopCoordinates().get(index).latitude(),
+                    estimate.stopCoordinates().get(index).longitude()
+            ));
+        }
         return toResponse(routeRepository.saveAndFlush(route));
     }
 
@@ -391,7 +512,8 @@ public class RouteService {
             BigDecimal goodsVolume,
             OffsetDateTime departureTime,
             OffsetDateTime arrivalTime,
-            Long requestedTrailerId
+            Long requestedTrailerId,
+            Long excludedRouteId
     ) {
         BigDecimal vehicleWeight = BigDecimal.valueOf(vehicle.getMaxWeightCapacityKg());
         BigDecimal vehicleVolume = BigDecimal.valueOf(vehicle.getMaxVolumeM3());
@@ -401,6 +523,9 @@ public class RouteService {
         boolean trailerRequired = vehicle.getVehicleType() == VehicleType.ARTICULATED_TRUCK
                 || !vehicleFits
                 || specializedCargo;
+        if (vehicle.getVehicleType() == VehicleType.ARTICULATED_TRUCK && requestedTrailerId == null) {
+            throw new RouteConflictException("An articulated truck requires an explicitly selected compatible trailer.");
+        }
         if (!trailerRequired && requestedTrailerId == null) {
             return null;
         }
@@ -426,9 +551,11 @@ public class RouteService {
                 .filter(trailer -> goods.stream()
                         .allMatch(item -> trailer.getTrailerType().supports(item.getGoodsType())))
                 .filter(trailer -> fitsTrailer(trailer, requiredWeight, requiredVolume))
-                .filter(trailer -> !routeRepository.existsTrailerScheduleOverlap(
-                        trailer.getId(), SCHEDULED_STATUSES, departureTime, arrivalTime
-                ))
+                .filter(trailer -> excludedRouteId == null
+                        ? !routeRepository.existsTrailerScheduleOverlap(
+                                trailer.getId(), SCHEDULED_STATUSES, departureTime, arrivalTime)
+                        : !routeRepository.existsTrailerScheduleOverlapExcludingRoute(
+                                trailer.getId(), SCHEDULED_STATUSES, departureTime, arrivalTime, excludedRouteId))
                 .filter(trailer -> !routeRepository.existsByTrailer_IdAndStatusInAndEstimatedReturnTimeAfter(
                         trailer.getId(), List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), departureTime
                 ))
@@ -480,6 +607,29 @@ public class RouteService {
         ) || (trailerId != null && routeRepository.existsByTrailer_IdAndStatusInAndEstimatedReturnTimeAfter(
                 trailerId, List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), departureTime
         ))) {
+            throw new RouteConflictException("An assigned resource is still returning from a completed route.");
+        }
+    }
+
+    private void ensureNoScheduleOverlapExcludingRoute(
+            Long excludedRouteId,
+            Long driverId,
+            Long vehicleId,
+            OffsetDateTime departureTime,
+            OffsetDateTime arrivalTime
+    ) {
+        if (routeRepository.existsDriverScheduleOverlapExcludingRoute(
+                driverId, SCHEDULED_STATUSES, departureTime, arrivalTime, excludedRouteId)) {
+            throw new RouteConflictException("The driver already has an overlapping planned or active route.");
+        }
+        if (routeRepository.existsVehicleScheduleOverlapExcludingRoute(
+                vehicleId, SCHEDULED_STATUSES, departureTime, arrivalTime, excludedRouteId)) {
+            throw new RouteConflictException("The vehicle already has an overlapping planned or active route.");
+        }
+        if (routeRepository.existsByDriver_IdAndStatusInAndEstimatedReturnTimeAfter(
+                driverId, List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), departureTime)
+                || routeRepository.existsByVehicle_IdAndStatusInAndEstimatedReturnTimeAfter(
+                vehicleId, List.of(RouteStatus.COMPLETED, RouteStatus.CANCELLED), departureTime)) {
             throw new RouteConflictException("An assigned resource is still returning from a completed route.");
         }
     }

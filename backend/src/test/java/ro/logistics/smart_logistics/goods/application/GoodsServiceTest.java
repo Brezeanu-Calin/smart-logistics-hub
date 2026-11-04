@@ -136,6 +136,23 @@ class GoodsServiceTest {
     }
 
     @Test
+    void saveGoodsRequiresRevenue() {
+        GoodsDTO missingRevenue = new GoodsDTO(
+                "Client",
+                GoodsType.GENERAL,
+                null,
+                2500.0,
+                null,
+                10.0,
+                "Cluj",
+                "Bucharest"
+        );
+
+        assertThrows(InvalidGoodsException.class, () -> goodsService.saveGoods(missingRevenue));
+        verify(goodsRepository, never()).saveAndFlush(any(Goods.class));
+    }
+
+    @Test
     void deleteGoodsListClearsOnlyProvidedAssociationList() {
         List<Goods> goodsList = new ArrayList<>(List.of(goods()));
 

@@ -2,6 +2,8 @@ package ro.logistics.smart_logistics.trailer.application;
 
 import ro.logistics.smart_logistics.route.domain.RouteStatus;
 import ro.logistics.smart_logistics.route.persistence.RouteRepository;
+import ro.logistics.smart_logistics.maintenance.application.TrailerMaintenanceService;
+import ro.logistics.smart_logistics.maintenance.dto.TrailerMaintenanceOperationRequest;
 import ro.logistics.smart_logistics.trailer.domain.Trailer;
 import ro.logistics.smart_logistics.trailer.domain.TrailerStatus;
 import ro.logistics.smart_logistics.trailer.dto.TrailerRequest;
@@ -28,16 +30,22 @@ public class TrailerService {
 
     private final TrailerRepository trailerRepository;
     private final RouteRepository routeRepository;
+    private final TrailerMaintenanceService maintenanceService;
 
-    public TrailerService(TrailerRepository trailerRepository, RouteRepository routeRepository) {
+    public TrailerService(
+            TrailerRepository trailerRepository,
+            RouteRepository routeRepository,
+            TrailerMaintenanceService maintenanceService
+    ) {
         this.trailerRepository = trailerRepository;
         this.routeRepository = routeRepository;
+        this.maintenanceService = maintenanceService;
     }
 
     @Transactional(readOnly = true)
     public List<TrailerResponse> findAll() {
         return trailerRepository.findAllByOrderByLicensePlateAsc().stream()
-                .map(TrailerService::toResponse)
+                .map(this::toResponse)
                 .toList();
     }
 
@@ -96,6 +104,14 @@ public class TrailerService {
             throw new InvalidTrailerStatusException(exception.getMessage());
         }
         return toResponse(trailerRepository.save(trailer));
+    }
+
+    public TrailerResponse recordMaintenanceOperation(
+            @Positive Long id,
+            @Valid TrailerMaintenanceOperationRequest request
+    ) {
+        maintenanceService.recordOperation(id, request);
+        return findById(id);
     }
 
     public void delete(@Positive Long id) {
@@ -157,7 +173,7 @@ public class TrailerService {
         };
     }
 
-    private static TrailerResponse toResponse(Trailer trailer) {
+    private TrailerResponse toResponse(Trailer trailer) {
         return new TrailerResponse(
                 trailer.getId(),
                 trailer.getLicensePlate(),
@@ -168,7 +184,9 @@ public class TrailerService {
                 trailer.getYear(),
                 trailer.getMaxWeightCapacityKg(),
                 trailer.getMaxVolumeM3(),
-                trailer.getStatus()
+                trailer.getStatus(),
+                maintenanceService.componentsFor(trailer),
+                maintenanceService.historyFor(trailer)
         );
     }
 }

@@ -103,7 +103,7 @@ const trailerForm = reactive<TrailerRequest>({
   maxVolumeM3: 10,
 })
 const editingTrailerId = ref<number | null>(null)
-const goodsForm = reactive<GoodsRequest>({
+const goodsForm = reactive<Omit<GoodsRequest, 'revenueEur'> & { revenueEur: number | null }>({
   clientName: '',
   goodsType: 'GENERAL',
   description: null,
@@ -121,8 +121,11 @@ const routeForm = reactive({
   departureLocal: '',
 })
 const selectedGoodsIds = ref<number[]>([])
+const editingRouteId = ref<number | null>(null)
+let restoringRouteForm = false
 const routePlannerOpen = ref(false)
 const expandedRouteMaps = ref(new Set<number>())
+const hiddenLiveRouteMaps = ref(new Set<number>())
 const loadingRouteMaps = ref(new Set<number>())
 const selectedVehicleId = ref<number | null>(null)
 const selectedMaintenanceVehicleId = ref<number | null>(null)
@@ -242,7 +245,9 @@ const compatibleRouteTrailers = computed(() => {
     && trailer.maxVolumeM3 >= requiredVolume
     && cargo.every((item) => trailerSupportsGoods(trailer.trailerType, item.goodsType))
     && !routes.value.some((route) =>
-      route.trailerId === trailer.id && (route.status === 'PLANNED' || route.status === 'ACTIVE'),
+      route.id !== editingRouteId.value
+      && route.trailerId === trailer.id
+      && (route.status === 'PLANNED' || route.status === 'ACTIVE'),
     ),
   )
 })
@@ -256,7 +261,11 @@ const visibleContracts = computed(() => {
     return (second.revenueEur / second.distanceKm) - (first.revenueEur / first.distanceKm)
   })
 })
-const unassignedGoods = computed(() => goods.value.filter((item) => item.status === 'UNASSIGNED'))
+const unassignedGoods = computed(() => goods.value.filter((item) =>
+  item.status === 'UNASSIGNED'
+  || (editingRouteId.value !== null
+    && routes.value.find((route) => route.id === editingRouteId.value)?.stops.some((stop) => stop.goodsId === item.id)),
+))
 const screenTitle = computed(() => ({
   overview: 'Overview',
   routes: 'Route Planner & Dispatch',
@@ -284,10 +293,38 @@ function lowestHealth(vehicle: Vehicle) {
 }
 
 function openRoutePlanner() {
+  restoringRouteForm = true
+  editingRouteId.value = null
+  selectedGoodsIds.value = []
+  Object.assign(routeForm, { driverId: 0, vehicleId: 0, trailerId: 0 })
   section.value = 'routes'
   mobileMoreOpen.value = false
   routePlannerOpen.value = true
   routeForm.departureLocal = defaultDepartureTime()
+  restoringRouteForm = false
+}
+
+function editPlannedRoute(route: Route) {
+  restoringRouteForm = true
+  editingRouteId.value = route.id
+  selectedGoodsIds.value = route.stops
+    .filter((stop) => stop.type === 'PICKUP')
+    .sort((first, second) => first.stopOrder - second.stopOrder)
+    .map((stop) => stop.goodsId)
+  Object.assign(routeForm, {
+    driverId: route.driverId,
+    vehicleId: route.vehicleId,
+    trailerId: route.trailerId ?? 0,
+    departureLocal: (() => {
+      const local = new Date(route.departureTime)
+      local.setMinutes(local.getMinutes() - local.getTimezoneOffset())
+      return local.toISOString().slice(0, 16)
+    })(),
+  })
+  section.value = 'routes'
+  mobileMoreOpen.value = false
+  routePlannerOpen.value = true
+  restoringRouteForm = false
 }
 
 function startRefresh() {
@@ -602,9 +639,9 @@ watch([error, success], ([nextError, nextSuccess]) => {
   }
 })
 
-watch(() => routeForm.vehicleId, () => {
-  routeForm.trailerId = 0
-})
+watch(() => routeForm.vehicleId, (vehicleId, previousId) => {
+  if (!restoringRouteForm && previousId !== 0 && vehicleId !== previousId) routeForm.trailerId = 0
+}, { flush: 'sync' })
 watch(routeNeedsTrailer, (required) => {
   if (!required) routeForm.trailerId = 0
 })
@@ -975,13 +1012,17 @@ async function saveGoods() {
   clearMessages()
   const revenueText = String(goodsForm.revenueEur ?? '').trim()
   const revenueEur = revenueText ? Number(revenueText) : null
+  if (revenueEur === null) {
+    error.value = 'Freight revenue is required.'
+    return
+  }
   if (goodsForm.pickupCity.trim().toLocaleLowerCase() === goodsForm.deliveryCity.trim().toLocaleLowerCase()) {
     error.value = 'Pickup and delivery cities must be different.'
     return
   }
   if (revenueEur !== null && (!Number.isFinite(revenueEur) || revenueEur < 0 || revenueEur > 9_999_999_999.99
     || !/^\d+(\.\d{1,2})?$/.test(revenueText))) {
-    error.value = 'Freight revenue must be between €0 and €9,999,999,999.99 with at most two decimals, or left blank.'
+    error.value = 'Freight revenue must be between €0 and €9,999,999,999.99 with at most two decimals.'
     return
   }
   busy.value = true
@@ -1010,6 +1051,13 @@ function defaultDepartureTime() {
   const departure = new Date(Date.now() + 60_000)
   departure.setMinutes(departure.getMinutes() - departure.getTimezoneOffset())
   return departure.toISOString().slice(0, 16)
+}
+
+function toggleLiveRouteMap(routeId: number) {
+  const hidden = new Set(hiddenLiveRouteMaps.value)
+  if (hidden.has(routeId)) hidden.delete(routeId)
+  else hidden.add(routeId)
+  hiddenLiveRouteMaps.value = hidden
 }
 
 async function createRoute() {
@@ -1045,9 +1093,13 @@ async function createRoute() {
         ...selectedGoodsIds.value.map((goodsId) => ({ goodsId, type: 'DELIVERY' as const })),
       ],
     }
-    await api.post('/routes', request)
-    success.value = 'Route planned. Distance and driving time were calculated.'
+    if (editingRouteId.value === null) await api.post('/routes', request)
+    else await api.put(`/routes/${editingRouteId.value}`, request)
+    success.value = editingRouteId.value === null
+      ? 'Route planned. Distance and driving time were calculated.'
+      : 'Planned route updated. Distance and driving time were recalculated.'
     routePlannerOpen.value = false
+    editingRouteId.value = null
     selectedGoodsIds.value = []
     routeForm.departureLocal = defaultDepartureTime()
     await loadData()
@@ -1226,8 +1278,9 @@ routeForm.departureLocal = defaultDepartureTime()
             <div v-if="!liveRoutes.length" class="empty-state"><span>↗</span><strong>No active routes</strong><p>Start a planned route to see its actual road geometry and simulated vehicle position here.</p></div>
             <div v-else class="route-list">
               <article v-for="route in liveRoutes" :key="route.id" class="route-card">
-                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill active">EN ROUTE</span></div><span class="route-number">{{ route.vehicleLicensePlate }} · {{ route.driverName }}</span></div>
+                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill active">EN ROUTE</span></div><div class="route-actions"><span class="route-number">{{ route.vehicleLicensePlate }} · {{ route.driverName }}</span><button class="text-button" type="button" :aria-expanded="!hiddenLiveRouteMaps.has(route.id)" @click="toggleLiveRouteMap(route.id)">{{ hiddenLiveRouteMaps.has(route.id) ? 'Show map' : 'Hide map' }}</button></div></div>
                 <RouteMap
+                  v-if="!hiddenLiveRouteMaps.has(route.id)"
                   :route-id="route.id"
                   :geometry="route.geometry"
                   :stops="route.stops"
@@ -1242,15 +1295,15 @@ routeForm.departureLocal = defaultDepartureTime()
           <Teleport to="body">
           <div v-if="routePlannerOpen" class="modal-backdrop" @click.self="routePlannerOpen = false">
           <section class="panel form-panel modal-dialog route-planner-dialog" role="dialog" aria-modal="true" aria-labelledby="route-planner-title">
-            <div class="panel-heading"><div><h2 id="route-planner-title">Plan a route</h2><p>Cities are geocoded with Nominatim and routed by OSRM.</p></div><button class="icon-button" aria-label="Close route planner" @click="routePlannerOpen = false">×</button></div>
+            <div class="panel-heading"><div><h2 id="route-planner-title">{{ editingRouteId === null ? 'Plan a route' : `Edit planned route #${editingRouteId}` }}</h2><p>Cities are geocoded with Nominatim and routed by OSRM.</p></div><button class="icon-button" aria-label="Close route planner" @click="routePlannerOpen = false">×</button></div>
             <form class="form-grid route-form" @submit.prevent="createRoute">
-              <label>Driver<select v-model.number="routeForm.driverId" required><option :value="0" disabled>Select an available driver</option><option v-for="driver in drivers.filter((item) => item.status === 'AVAILABLE' && !isDriverScheduled(item.id))" :key="driver.id" :value="driver.id">{{ driver.name }} · {{ driver.licenseCategories.join(', ') }}</option></select></label>
-              <label>Vehicle<select v-model.number="routeForm.vehicleId" required><option :value="0" disabled>Select an available vehicle</option><option v-for="vehicle in vehicles.filter((item) => item.status === 'AVAILABLE' && !item.maintenanceAutoTriggered && !isVehicleScheduled(item.id))" :key="vehicle.id" :value="vehicle.id">{{ vehicle.licensePlate }} · {{ vehicle.vehicleType.replaceAll('_', ' ') }}</option></select></label>
+              <label>Driver<select v-model.number="routeForm.driverId" required><option :value="0" disabled>Select an available driver</option><option v-for="driver in drivers.filter((item) => item.status === 'AVAILABLE' && (!isDriverScheduled(item.id) || routes.some((route) => route.id === editingRouteId && route.driverId === item.id)))" :key="driver.id" :value="driver.id">{{ driver.name }} · {{ driver.licenseCategories.join(', ') }}</option></select></label>
+              <label>Vehicle<select v-model.number="routeForm.vehicleId" required><option :value="0" disabled>Select an available vehicle</option><option v-for="vehicle in vehicles.filter((item) => item.status === 'AVAILABLE' && !item.maintenanceAutoTriggered && (!isVehicleScheduled(item.id) || routes.some((route) => route.id === editingRouteId && route.vehicleId === item.id)))" :key="vehicle.id" :value="vehicle.id">{{ vehicle.licensePlate }} · {{ vehicle.vehicleType.replaceAll('_', ' ') }}</option></select></label>
               <label v-if="routeNeedsTrailer" class="trailer-select-label">Trailer {{ selectedRouteVehicle?.vehicleType === 'ARTICULATED_TRUCK' ? '(required)' : '(required for this load)' }}<select v-model.number="routeForm.trailerId" required><option :value="0" disabled>Select a compatible available trailer</option><option v-for="trailer in compatibleRouteTrailers" :key="trailer.id" :value="trailer.id">{{ trailer.licensePlate }} · {{ trailerTypeLabel(trailer.trailerType) }} · {{ trailer.maxWeightCapacityKg.toLocaleString() }} kg / {{ trailer.maxVolumeM3 }} m³</option></select><small v-if="!compatibleRouteTrailers.length">No matching trailer available. <button type="button" class="text-button" @click="section = 'fleet'">Add a trailer in Fleet Ops</button></small></label>
-              <label>Departure time<input v-model="routeForm.departureLocal" type="datetime-local" :min="routeForm.departureLocal" required></label>
+              <label>Departure date and time<input v-model="routeForm.departureLocal" type="datetime-local" :min="defaultDepartureTime()" required @click="($event.target as HTMLInputElement).showPicker?.()"></label>
               <fieldset class="goods-picker"><legend>Unassigned freight <span>{{ selectedGoodsIds.length }} selected</span></legend><div v-if="!unassignedGoods.length" class="small-empty">No unassigned freight is available.</div><label v-for="item in unassignedGoods" :key="item.id" class="check-row"><input v-model="selectedGoodsIds" type="checkbox" :value="item.id"><span><strong>{{ item.clientName }}</strong><small>{{ item.trackingCode }} · {{ item.pickupCity }} → {{ item.deliveryCity }}</small></span><b>{{ item.weightKg }} kg</b></label></fieldset>
               <div v-if="selectedGoods.length" class="selected-order"><strong>Pickup and delivery order</strong><p>All pickups are planned first; delivery order follows this list. Use the arrows to reorder.</p><ol><li v-for="(item, index) in selectedGoods" :key="item.id"><span class="order-number">{{ index + 1 }}</span><span class="order-name">{{ item.clientName }} <small>{{ item.trackingCode }}</small></span><button type="button" :disabled="index === 0" :aria-label="`Move ${item.clientName} up`" @click="moveSelectedGoods(index, -1)">↑</button><button type="button" :disabled="index === selectedGoods.length - 1" :aria-label="`Move ${item.clientName} down`" @click="moveSelectedGoods(index, 1)">↓</button></li></ol></div>
-              <div class="form-actions"><button class="primary-button" :disabled="busy || !routeForm.driverId || !routeForm.vehicleId || selectedGoodsIds.length > 12 || (routeNeedsTrailer && (!routeForm.trailerId || !compatibleRouteTrailers.some((item) => item.id === routeForm.trailerId)))">Calculate &amp; plan route</button><span>City-level estimates use geocoded city locations, not exact pickup or delivery points. Freight type, combined weight/volume, vehicle, and trailer compatibility are checked before planning.</span></div>
+              <div class="form-actions"><button class="primary-button" :disabled="busy || !routeForm.driverId || !routeForm.vehicleId || selectedGoodsIds.length > 12 || (routeNeedsTrailer && (!routeForm.trailerId || !compatibleRouteTrailers.some((item) => item.id === routeForm.trailerId)))">{{ editingRouteId === null ? 'Calculate & plan route' : 'Save route changes' }}</button><span>City-level estimates use geocoded city locations, not exact pickup or delivery points. Freight type, combined weight/volume, vehicle, and trailer compatibility are checked before planning.</span></div>
             </form>
           </section>
           </div>
@@ -1262,7 +1315,7 @@ routeForm.departureLocal = defaultDepartureTime()
             <div v-else-if="!filteredRoutes.length" class="empty-state"><strong>No matching routes</strong><p>Try a different route, driver, vehicle, freight, or city search.</p></div>
             <div v-else class="route-list">
               <article v-for="route in paginatedRoutes" :key="route.id" class="route-card">
-                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></div><div class="route-actions"><button v-if="route.status !== 'ACTIVE'" class="text-button" :disabled="loadingRouteMaps.has(route.id)" @click="toggleRouteMap(route)">{{ loadingRouteMaps.has(route.id) ? 'Calculating route…' : expandedRouteMaps.has(route.id) ? 'Hide map' : 'Show map' }}</button><button v-if="route.status === 'PLANNED'" class="small-button" :disabled="busy" @click="setRouteStatus(route, 'ACTIVE')">Start route</button><button v-if="route.status === 'PLANNED' || (route.status === 'CANCELLED' && (!route.estimatedReturnTime || route.returnedAt))" class="icon-button danger" :disabled="busy" aria-label="Delete route" @click="deleteRoute(route)">⌫</button></div></div>
+                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></div><div class="route-actions"><button v-if="route.status !== 'ACTIVE'" class="text-button" :disabled="loadingRouteMaps.has(route.id)" @click="toggleRouteMap(route)">{{ loadingRouteMaps.has(route.id) ? 'Calculating route…' : expandedRouteMaps.has(route.id) ? 'Hide map' : 'Show map' }}</button><button v-if="route.status === 'PLANNED'" class="text-button" :disabled="busy" @click="editPlannedRoute(route)">Edit route</button><button v-if="route.status === 'PLANNED'" class="small-button" :disabled="busy" @click="setRouteStatus(route, 'ACTIVE')">Start route</button><button v-if="route.status === 'PLANNED' || (route.status === 'CANCELLED' && (!route.estimatedReturnTime || route.returnedAt))" class="icon-button danger" :disabled="busy" aria-label="Delete route" @click="deleteRoute(route)">⌫</button></div></div>
                 <div class="route-summary"><div><small>DRIVER</small><strong>{{ route.driverName }}</strong></div><div><small>VEHICLE</small><strong>{{ route.vehicleLicensePlate }}<template v-if="route.trailerLicensePlate"> + {{ route.trailerLicensePlate }}</template></strong></div><div><small>DEPARTURE</small><strong>{{ displayDate(route.departureTime) }}</strong></div><div><small>EST. AT DEPOT</small><strong>{{ displayDate(route.estimatedReturnTime) }}</strong></div></div>
                 <div class="route-metrics"><span>↔ {{ (route.distanceMeters / 1000).toFixed(1) }} km total distance</span><span>◷ {{ displayDuration(route.drivingDurationSeconds) }} driving</span><span v-if="route.returnedAt">✓ Returned {{ displayDate(route.returnedAt) }}</span></div>
                 <RouteMap
@@ -1299,7 +1352,7 @@ routeForm.departureLocal = defaultDepartureTime()
               <label>Client name<input v-model.trim="goodsForm.clientName" maxlength="150" required></label>
               <label>Freight type<select v-model="goodsForm.goodsType"><option value="GENERAL">General cargo</option><option value="REFRIGERATED">Refrigerated</option><option value="HAZARDOUS">Hazardous</option><option value="OVERSIZED">Oversized / heavy haul</option><option value="BULK">Dry bulk</option><option value="LIQUID">Liquid</option><option value="CONTAINERIZED">Containerized</option><option value="VEHICLES">Vehicles</option><option value="LIVESTOCK">Livestock</option></select></label>
               <label>Weight (kg)<input v-model.number="goodsForm.weightKg" type="number" min="0.01" step="0.01" required></label>
-              <label>Freight revenue (EUR) <span class="optional">(optional)</span><input v-model.number="goodsForm.revenueEur" type="number" min="0" max="9999999999.99" step="0.01"></label>
+              <label>Freight revenue (EUR)<input v-model.number="goodsForm.revenueEur" type="number" min="0" max="9999999999.99" step="0.01" required></label>
               <label>Volume (m³)<input v-model.number="goodsForm.volumeM3" type="number" min="0.01" step="0.01" required></label>
               <label class="full-width">Pickup city<input v-model.trim="goodsForm.pickupCity" :placeholder="warehouseCity" maxlength="500" required></label>
               <label class="full-width">Delivery city<input v-model.trim="goodsForm.deliveryCity" maxlength="500" required></label>

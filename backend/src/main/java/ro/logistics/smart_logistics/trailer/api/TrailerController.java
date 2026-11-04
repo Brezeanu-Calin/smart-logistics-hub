@@ -4,6 +4,7 @@ import ro.logistics.smart_logistics.trailer.application.TrailerService;
 import ro.logistics.smart_logistics.trailer.dto.TrailerRequest;
 import ro.logistics.smart_logistics.trailer.dto.TrailerResponse;
 import ro.logistics.smart_logistics.trailer.dto.TrailerStatusRequest;
+import ro.logistics.smart_logistics.maintenance.dto.TrailerMaintenanceOperationRequest;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
@@ -64,6 +65,14 @@ public class TrailerController {
             @Valid @RequestBody TrailerStatusRequest request
     ) {
         return trailerService.updateDispatcherManagedStatus(id, request.status());
+    }
+
+    @PostMapping("/{id}/maintenance")
+    public TrailerResponse recordMaintenanceOperation(
+            @PathVariable @Positive Long id,
+            @Valid @RequestBody TrailerMaintenanceOperationRequest request
+    ) {
+        return trailerService.recordMaintenanceOperation(id, request);
     }
 
     @DeleteMapping("/{id}")

@@ -119,6 +119,32 @@ public class Route {
         geometryPoints.clear();
     }
 
+    public void clearStops() {
+        stops.clear();
+    }
+
+    public void updatePlannedDetails(
+            Driver driver,
+            Vehicle vehicle,
+            Trailer trailer,
+            OffsetDateTime departureTime,
+            OffsetDateTime estimatedArrivalTime,
+            Long distanceMeters,
+            Long drivingDurationSeconds,
+            Long returnDurationSeconds
+    ) {
+        requireStatus(RouteStatus.PLANNED);
+        this.driver = driver;
+        this.vehicle = vehicle;
+        this.trailer = trailer;
+        this.departureTime = departureTime;
+        this.estimatedArrivalTime = estimatedArrivalTime;
+        this.estimatedReturnTime = estimatedArrivalTime.plusSeconds(returnDurationSeconds);
+        this.distanceMeters = distanceMeters;
+        this.drivingDurationSeconds = drivingDurationSeconds;
+        this.returnDurationSeconds = returnDurationSeconds;
+    }
+
     public void activate() {
         activate(OffsetDateTime.now(ZoneOffset.UTC));
     }

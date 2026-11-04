@@ -53,6 +53,23 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
     @Query("""
             select case when count(r) > 0 then true else false end
             from Route r
+            where r.id <> :excludedRouteId
+              and r.status in :statuses
+              and r.driver.id = :driverId
+              and r.departureTime < :arrivalTime
+              and coalesce(r.estimatedReturnTime, r.estimatedArrivalTime) > :departureTime
+            """)
+    boolean existsDriverScheduleOverlapExcludingRoute(
+            @Param("driverId") Long driverId,
+            @Param("statuses") List<RouteStatus> statuses,
+            @Param("departureTime") OffsetDateTime departureTime,
+            @Param("arrivalTime") OffsetDateTime arrivalTime,
+            @Param("excludedRouteId") Long excludedRouteId
+    );
+
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Route r
             where r.status in :statuses
               and r.vehicle.id = :vehicleId
               and r.departureTime < :arrivalTime
@@ -68,6 +85,23 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
     @Query("""
             select case when count(r) > 0 then true else false end
             from Route r
+            where r.id <> :excludedRouteId
+              and r.status in :statuses
+              and r.vehicle.id = :vehicleId
+              and r.departureTime < :arrivalTime
+              and coalesce(r.estimatedReturnTime, r.estimatedArrivalTime) > :departureTime
+            """)
+    boolean existsVehicleScheduleOverlapExcludingRoute(
+            @Param("vehicleId") Long vehicleId,
+            @Param("statuses") List<RouteStatus> statuses,
+            @Param("departureTime") OffsetDateTime departureTime,
+            @Param("arrivalTime") OffsetDateTime arrivalTime,
+            @Param("excludedRouteId") Long excludedRouteId
+    );
+
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Route r
             where r.status in :statuses
               and r.trailer.id = :trailerId
               and r.departureTime < :arrivalTime
@@ -78,6 +112,23 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
             @Param("statuses") List<RouteStatus> statuses,
             @Param("departureTime") OffsetDateTime departureTime,
             @Param("arrivalTime") OffsetDateTime arrivalTime
+    );
+
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Route r
+            where r.id <> :excludedRouteId
+              and r.status in :statuses
+              and r.trailer.id = :trailerId
+              and r.departureTime < :arrivalTime
+              and coalesce(r.estimatedReturnTime, r.estimatedArrivalTime) > :departureTime
+            """)
+    boolean existsTrailerScheduleOverlapExcludingRoute(
+            @Param("trailerId") Long trailerId,
+            @Param("statuses") List<RouteStatus> statuses,
+            @Param("departureTime") OffsetDateTime departureTime,
+            @Param("arrivalTime") OffsetDateTime arrivalTime,
+            @Param("excludedRouteId") Long excludedRouteId
     );
 
     boolean existsByDriver_IdAndStatusAndIdNot(Long driverId, RouteStatus status, Long id);

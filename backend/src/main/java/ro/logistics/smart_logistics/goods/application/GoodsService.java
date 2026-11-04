@@ -152,8 +152,11 @@ public class GoodsService {
         if (dto.volumeM3() == null || !Double.isFinite(dto.volumeM3()) || dto.volumeM3() <= 0) {
             throw new InvalidGoodsException("Volume must be a finite value greater than zero.");
         }
-        if (dto.revenueEur() != null && (dto.revenueEur().signum() < 0
-                || dto.revenueEur().scale() > 2 || dto.revenueEur().precision() > 12)) {
+        if (dto.revenueEur() == null) {
+            throw new InvalidGoodsException("Freight revenue is required.");
+        }
+        if (dto.revenueEur().signum() < 0
+                || dto.revenueEur().scale() > 2 || dto.revenueEur().precision() > 12) {
             throw new InvalidGoodsException("Freight revenue must be a non-negative EUR amount with at most two decimals.");
         }
         if (isBlank(dto.pickupCity()) || isBlank(dto.deliveryCity())) {

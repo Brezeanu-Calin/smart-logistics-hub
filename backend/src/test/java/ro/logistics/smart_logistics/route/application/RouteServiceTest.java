@@ -163,7 +163,7 @@ class RouteServiceTest {
     }
 
     @Test
-    void articulatedTruckAlwaysRequiresMatchingTrailer() throws Exception {
+    void articulatedTruckRequiresExplicitlySelectedMatchingTrailer() throws Exception {
         Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.CE));
         setId(driver, 1L);
         Vehicle vehicle = new Vehicle(
@@ -171,23 +171,58 @@ class RouteServiceTest {
         );
         setId(vehicle, 2L);
         Goods goods = goods(3L, 1000.0, 5.0);
-        Trailer trailer = new Trailer(
-                "SEMI-1", TrailerType.ARTICULATED_TRUCK_TRAILER, VehicleType.ARTICULATED_TRUCK,
-                "Make", "Trailer", 2021, 1000.0, 5.0
-        );
-        setId(trailer, 4L);
-        prepareBasicCreate(driver, vehicle, goods);
-        when(trailerRepository.findAllForPlanning(
-                VehicleType.ARTICULATED_TRUCK,
-                List.of(TrailerStatus.AVAILABLE)
-        )).thenReturn(List.of(trailer));
-        when(routeRepository.existsTrailerScheduleOverlap(
-                eq(4L), anyList(), any(OffsetDateTime.class), any(OffsetDateTime.class)
+        when(driverRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(driver));
+        when(vehicleRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(vehicle));
+        when(goodsRepository.findAllByIdForUpdate(List.of(3L))).thenReturn(List.of(goods));
+        when(goodsRepository.findAllById(List.of(3L))).thenReturn(List.of(goods));
+        when(directionsService.estimate(anyList())).thenReturn(estimate(2));
+        when(routeRepository.existsDriverScheduleOverlap(
+                eq(1L), anyList(), any(OffsetDateTime.class), any(OffsetDateTime.class)
+        )).thenReturn(false);
+        when(routeRepository.existsVehicleScheduleOverlap(
+                eq(2L), anyList(), any(OffsetDateTime.class), any(OffsetDateTime.class)
         )).thenReturn(false);
 
-        var response = routeService.create(request(1L, 2L, 3L));
+        assertThrows(RouteConflictException.class, () -> routeService.create(request(1L, 2L, 3L)));
+    }
 
-        assertEquals(4L, response.trailerId());
+    @Test
+    void updatesPlannedRouteAndReassignsFreight() throws Exception {
+        Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.B));
+        setId(driver, 1L);
+        Vehicle vehicle = new Vehicle("VAN-1", VehicleType.VAN, "Make", "Model", 2022, 5000.0, 20.0, 1000);
+        setId(vehicle, 2L);
+        Goods originalGoods = goods(3L, 4000.0, 10.0);
+        originalGoods.assignToRoute();
+        Goods replacementGoods = goods(4L, 3000.0, 8.0);
+        Route route = route(driver, vehicle, originalGoods, RouteStatus.PLANNED);
+        setId(route, 8L);
+
+        when(routeRepository.findById(8L)).thenReturn(Optional.of(route));
+        when(routeRepository.findByIdForUpdate(8L)).thenReturn(Optional.of(route));
+        when(driverRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(driver));
+        when(vehicleRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(vehicle));
+        when(goodsRepository.findAllByIdForUpdate(List.of(3L))).thenReturn(List.of(originalGoods));
+        when(goodsRepository.findAllByIdForUpdate(List.of(3L, 4L))).thenReturn(List.of(originalGoods, replacementGoods));
+        when(directionsService.estimate(anyList())).thenReturn(estimate(2));
+        when(routeRepository.saveAndFlush(route)).thenReturn(route);
+
+        RouteCreateRequest update = new RouteCreateRequest(
+                1L,
+                2L,
+                OffsetDateTime.now().plusDays(2),
+                List.of(
+                        new RouteStopRequest(4L, RouteStopType.PICKUP),
+                        new RouteStopRequest(4L, RouteStopType.DELIVERY)
+                ),
+                null
+        );
+        var response = routeService.updatePlanned(8L, update);
+
+        assertEquals(8L, response.id());
+        assertEquals(4L, response.stops().getFirst().goodsId());
+        assertEquals(GoodsStatus.UNASSIGNED, originalGoods.getStatus());
+        assertEquals(GoodsStatus.ASSIGNED, replacementGoods.getStatus());
     }
 
     @Test

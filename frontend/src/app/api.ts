@@ -74,6 +74,25 @@ export interface Trailer {
   maxWeightCapacityKg: number
   maxVolumeM3: number
   status: 'AVAILABLE' | 'IN_TRANSIT' | 'MAINTENANCE'
+  maintenanceComponents: TrailerMaintenanceComponent[]
+  maintenanceHistory: TrailerMaintenanceRecord[]
+}
+
+export interface TrailerMaintenanceComponent {
+  key: string
+  label: string
+  serviceIntervalMonths: number
+  lastPerformedAt: string | null
+  lastCostEur: number | null
+  healthPercent: number | null
+  daysRemaining: number | null
+}
+
+export interface TrailerMaintenanceRecord {
+  componentKey: string
+  componentLabel: string
+  performedAt: string
+  costEur: number | null
 }
 
 export interface TrailerRequest {
@@ -141,7 +160,7 @@ export interface GoodsRequest {
   goodsType: Goods['goodsType']
   description: string | null
   weightKg: number
-  revenueEur: number | null
+  revenueEur: number
   volumeM3: number
   pickupCity: string
   deliveryCity: string
