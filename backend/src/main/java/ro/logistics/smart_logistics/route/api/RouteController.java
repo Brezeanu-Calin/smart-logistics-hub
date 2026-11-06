@@ -45,6 +45,11 @@ public class RouteController {
         return routeService.findAll();
     }
 
+    @GetMapping("/archive")
+    public List<RouteResponse> findArchived() {
+        return routeService.findArchived();
+    }
+
     @GetMapping("/simulations")
     public List<RouteSimulationPositionResponse> findActiveSimulationPositions() {
         return routeService.findActiveSimulationPositions();

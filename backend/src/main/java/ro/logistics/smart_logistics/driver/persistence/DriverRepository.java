@@ -14,6 +14,10 @@ import java.util.Optional;
 public interface DriverRepository extends JpaRepository<Driver, Long> {
     List<Driver> findAllByOrderByNameAsc();
 
+    List<Driver> findAllByArchivedFalseOrderByNameAsc();
+
+    List<Driver> findAllByArchivedTrueOrderByNameAsc();
+
     Optional<Driver> findByEmailIgnoreCase(String email);
 
     boolean existsByEmailIgnoreCase(String email);

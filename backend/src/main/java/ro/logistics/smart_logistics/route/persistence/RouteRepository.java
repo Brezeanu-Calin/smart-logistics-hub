@@ -19,6 +19,12 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
     List<Route> findAllByOrderByDepartureTimeAsc();
 
     @EntityGraph(attributePaths = {"driver", "vehicle", "trailer", "stops", "stops.goods"})
+    List<Route> findAllByArchivedFalseOrderByDepartureTimeAsc();
+
+    @EntityGraph(attributePaths = {"driver", "vehicle", "trailer", "stops", "stops.goods"})
+    List<Route> findAllByArchivedTrueOrderByDepartureTimeDesc();
+
+    @EntityGraph(attributePaths = {"driver", "vehicle", "trailer", "stops", "stops.goods"})
     List<Route> findAllByDepartureTimeGreaterThanEqualAndDepartureTimeLessThanOrderByDepartureTimeAsc(
             OffsetDateTime from,
             OffsetDateTime to
@@ -38,7 +44,8 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
     @Query("""
             select case when count(r) > 0 then true else false end
             from Route r
-            where r.status in :statuses
+            where r.archived = false
+              and r.status in :statuses
               and r.driver.id = :driverId
               and r.departureTime < :arrivalTime
               and coalesce(r.estimatedReturnTime, r.estimatedArrivalTime) > :departureTime
@@ -54,6 +61,7 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
             select case when count(r) > 0 then true else false end
             from Route r
             where r.id <> :excludedRouteId
+              and r.archived = false
               and r.status in :statuses
               and r.driver.id = :driverId
               and r.departureTime < :arrivalTime
@@ -70,7 +78,8 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
     @Query("""
             select case when count(r) > 0 then true else false end
             from Route r
-            where r.status in :statuses
+            where r.archived = false
+              and r.status in :statuses
               and r.vehicle.id = :vehicleId
               and r.departureTime < :arrivalTime
               and coalesce(r.estimatedReturnTime, r.estimatedArrivalTime) > :departureTime
@@ -86,6 +95,7 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
             select case when count(r) > 0 then true else false end
             from Route r
             where r.id <> :excludedRouteId
+              and r.archived = false
               and r.status in :statuses
               and r.vehicle.id = :vehicleId
               and r.departureTime < :arrivalTime
@@ -102,7 +112,8 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
     @Query("""
             select case when count(r) > 0 then true else false end
             from Route r
-            where r.status in :statuses
+            where r.archived = false
+              and r.status in :statuses
               and r.trailer.id = :trailerId
               and r.departureTime < :arrivalTime
               and coalesce(r.estimatedReturnTime, r.estimatedArrivalTime) > :departureTime
@@ -118,6 +129,7 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
             select case when count(r) > 0 then true else false end
             from Route r
             where r.id <> :excludedRouteId
+              and r.archived = false
               and r.status in :statuses
               and r.trailer.id = :trailerId
               and r.departureTime < :arrivalTime
@@ -137,11 +149,35 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
 
     boolean existsByTrailer_IdAndStatusAndIdNot(Long trailerId, RouteStatus status, Long id);
 
-    boolean existsByTrailer_IdAndStatusIn(Long trailerId, List<RouteStatus> statuses);
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Route r
+            where r.archived = false and r.trailer.id = :trailerId and r.status in :statuses
+            """)
+    boolean existsByTrailer_IdAndStatusIn(
+            @Param("trailerId") Long trailerId,
+            @Param("statuses") List<RouteStatus> statuses
+    );
 
-    boolean existsByDriver_IdAndStatusIn(Long driverId, List<RouteStatus> statuses);
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Route r
+            where r.archived = false and r.driver.id = :driverId and r.status in :statuses
+            """)
+    boolean existsByDriver_IdAndStatusIn(
+            @Param("driverId") Long driverId,
+            @Param("statuses") List<RouteStatus> statuses
+    );
 
-    boolean existsByVehicle_IdAndStatusIn(Long vehicleId, List<RouteStatus> statuses);
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Route r
+            where r.archived = false and r.vehicle.id = :vehicleId and r.status in :statuses
+            """)
+    boolean existsByVehicle_IdAndStatusIn(
+            @Param("vehicleId") Long vehicleId,
+            @Param("statuses") List<RouteStatus> statuses
+    );
 
     boolean existsByStops_Goods_Id(Long goodsId);
 
@@ -151,21 +187,45 @@ public interface RouteRepository extends JpaRepository<Route, Long> {
             OffsetDateTime returnTime
     );
 
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Route r
+            where r.driver.id = :driverId
+              and r.status in :statuses
+              and r.estimatedReturnTime > :departureTime
+              and (r.archived = false or r.returnedAt is null)
+            """)
     boolean existsByDriver_IdAndStatusInAndEstimatedReturnTimeAfter(
-            Long driverId,
-            List<RouteStatus> statuses,
-            OffsetDateTime departureTime
+            @Param("driverId") Long driverId,
+            @Param("statuses") List<RouteStatus> statuses,
+            @Param("departureTime") OffsetDateTime departureTime
     );
 
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Route r
+            where r.vehicle.id = :vehicleId
+              and r.status in :statuses
+              and r.estimatedReturnTime > :departureTime
+              and (r.archived = false or r.returnedAt is null)
+            """)
     boolean existsByVehicle_IdAndStatusInAndEstimatedReturnTimeAfter(
-            Long vehicleId,
-            List<RouteStatus> statuses,
-            OffsetDateTime departureTime
+            @Param("vehicleId") Long vehicleId,
+            @Param("statuses") List<RouteStatus> statuses,
+            @Param("departureTime") OffsetDateTime departureTime
     );
 
+    @Query("""
+            select case when count(r) > 0 then true else false end
+            from Route r
+            where r.trailer.id = :trailerId
+              and r.status in :statuses
+              and r.estimatedReturnTime > :departureTime
+              and (r.archived = false or r.returnedAt is null)
+            """)
     boolean existsByTrailer_IdAndStatusInAndEstimatedReturnTimeAfter(
-            Long trailerId,
-            List<RouteStatus> statuses,
-            OffsetDateTime departureTime
+            @Param("trailerId") Long trailerId,
+            @Param("statuses") List<RouteStatus> statuses,
+            @Param("departureTime") OffsetDateTime departureTime
     );
 }

@@ -53,6 +53,9 @@ public class Driver {
     @Enumerated(EnumType.STRING)
     private DriverStatus status = DriverStatus.AVAILABLE;
 
+    @Column(nullable = false)
+    private boolean archived;
+
     protected Driver() {
     }
 
@@ -113,5 +116,13 @@ public class Driver {
 
     public DriverStatus getStatus() {
         return status;
+    }
+
+    public boolean isArchived() {
+        return archived;
+    }
+
+    public void archive() {
+        archived = true;
     }
 }

@@ -54,6 +54,9 @@ public class Goods {
     @Column(nullable = false, length = 20)
     private GoodsStatus status = GoodsStatus.UNASSIGNED;
 
+    @Column(nullable = false)
+    private boolean archived;
+
     protected Goods() {
     }
 
@@ -117,6 +120,11 @@ public class Goods {
     public void archive() {
         requireStatus(GoodsStatus.DELIVERED);
         status = GoodsStatus.ARCHIVED;
+        archived = true;
+    }
+
+    public void archiveRecord() {
+        archived = true;
     }
 
     private void requireStatus(GoodsStatus requiredStatus) {
@@ -167,5 +175,9 @@ public class Goods {
 
     public GoodsStatus getStatus() {
         return status;
+    }
+
+    public boolean isArchived() {
+        return archived;
     }
 }

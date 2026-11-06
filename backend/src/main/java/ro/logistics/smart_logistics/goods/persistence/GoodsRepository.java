@@ -15,6 +15,10 @@ import java.util.Optional;
 public interface GoodsRepository extends JpaRepository<Goods, Long> {
     List<Goods> findAllByOrderByIdAsc();
 
+    List<Goods> findAllByArchivedFalseOrderByIdAsc();
+
+    List<Goods> findAllByArchivedTrueOrderByIdAsc();
+
     List<Goods> findAllByStatusOrderByIdAsc(GoodsStatus status);
 
     boolean existsByTrackingCode(String trackingCode);

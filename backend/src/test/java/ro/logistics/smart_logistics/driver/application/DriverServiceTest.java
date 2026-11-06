@@ -18,6 +18,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -76,5 +77,18 @@ class DriverServiceTest {
         );
 
         verify(driverRepository, never()).save(any(Driver.class));
+    }
+
+    @Test
+    void deletingDriverWithCompletedHistoryArchivesInsteadOfRemovingIt() {
+        Driver driver = new Driver("Alex Driver", "driver@example.com", Set.of(LicenseCategory.B));
+        when(driverRepository.findByIdForUpdate(7L)).thenReturn(Optional.of(driver));
+        when(driverRepository.saveAndFlush(driver)).thenReturn(driver);
+
+        driverService.delete(7L);
+
+        assertTrue(driver.isArchived());
+        verify(driverRepository).saveAndFlush(driver);
+        verify(driverRepository, never()).delete(any(Driver.class));
     }
 }

@@ -59,6 +59,9 @@ public class Vehicle {
     @Column(name = "maintenance_auto_triggered", nullable = false)
     private boolean maintenanceAutoTriggered;
 
+    @Column(nullable = false)
+    private boolean archived;
+
     protected Vehicle() {
     }
 
@@ -244,5 +247,13 @@ public class Vehicle {
 
     public boolean isMaintenanceAutoTriggered() {
         return maintenanceAutoTriggered;
+    }
+
+    public boolean isArchived() {
+        return archived;
+    }
+
+    public void archive() {
+        archived = true;
     }
 }

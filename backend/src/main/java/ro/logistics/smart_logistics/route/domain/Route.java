@@ -72,6 +72,9 @@ public class Route {
     @Column(nullable = false, length = 20)
     private RouteStatus status = RouteStatus.PLANNED;
 
+    @Column(nullable = false)
+    private boolean archived;
+
     @OneToMany(mappedBy = "route", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("stopOrder ASC")
     private List<RouteStop> stops = new ArrayList<>();
@@ -161,6 +164,7 @@ public class Route {
     public void complete() {
         requireStatus(RouteStatus.ACTIVE);
         status = RouteStatus.COMPLETED;
+        archived = true;
     }
 
     public void setEstimatedReturnTime(OffsetDateTime estimatedReturnTime) {
@@ -241,6 +245,14 @@ public class Route {
 
     public RouteStatus getStatus() {
         return status;
+    }
+
+    public boolean isArchived() {
+        return archived;
+    }
+
+    public void archive() {
+        archived = true;
     }
 
     public List<RouteStop> getStops() {

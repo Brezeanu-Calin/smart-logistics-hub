@@ -38,6 +38,11 @@ public class DriverController {
         return driverService.findAll();
     }
 
+    @GetMapping("/archive")
+    public List<DriverResponse> findArchived() {
+        return driverService.findArchived();
+    }
+
     @GetMapping("/{id}")
     public DriverResponse findById(@PathVariable @Positive Long id) {
         return driverService.findById(id);

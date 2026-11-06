@@ -10,6 +10,7 @@ public record DriverResponse(
         String name,
         String email,
         Set<LicenseCategory> licenseCategories,
-        DriverStatus status
+        DriverStatus status,
+        boolean archived
 ) {
 }

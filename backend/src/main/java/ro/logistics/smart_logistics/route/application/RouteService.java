@@ -10,6 +10,7 @@ import ro.logistics.smart_logistics.goods.domain.Goods;
 import ro.logistics.smart_logistics.goods.domain.GoodsStatus;
 import ro.logistics.smart_logistics.goods.persistence.GoodsRepository;
 import ro.logistics.smart_logistics.route.domain.Route;
+import ro.logistics.smart_logistics.route.domain.RouteArchiveRecord;
 import ro.logistics.smart_logistics.route.domain.RouteStatus;
 import ro.logistics.smart_logistics.route.domain.RouteStop;
 import ro.logistics.smart_logistics.route.domain.RouteStopType;
@@ -21,6 +22,7 @@ import ro.logistics.smart_logistics.route.dto.RouteSimulationPositionResponse;
 import ro.logistics.smart_logistics.route.dto.RouteStopRequest;
 import ro.logistics.smart_logistics.route.dto.RouteStopResponse;
 import ro.logistics.smart_logistics.route.persistence.RouteRepository;
+import ro.logistics.smart_logistics.route.persistence.RouteArchiveRecordRepository;
 import ro.logistics.smart_logistics.trailer.domain.Trailer;
 import ro.logistics.smart_logistics.trailer.domain.TrailerStatus;
 import ro.logistics.smart_logistics.trailer.persistence.TrailerRepository;
@@ -38,6 +40,8 @@ import jakarta.validation.constraints.Positive;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.OffsetDateTime;
@@ -59,6 +63,7 @@ public class RouteService {
     private static final List<RouteStatus> SCHEDULED_STATUSES = List.of(RouteStatus.PLANNED, RouteStatus.ACTIVE);
 
     private final RouteRepository routeRepository;
+    private final RouteArchiveRecordRepository routeArchiveRepository;
     private final DriverRepository driverRepository;
     private final VehicleRepository vehicleRepository;
     private final TrailerRepository trailerRepository;
@@ -66,18 +71,22 @@ public class RouteService {
     private final EntityManager entityManager;
     private final RouteDirectionsService directionsService;
     private final VehicleMaintenanceService maintenanceService;
+    private final ObjectMapper objectMapper;
 
     public RouteService(
             RouteRepository routeRepository,
+            RouteArchiveRecordRepository routeArchiveRepository,
             DriverRepository driverRepository,
             VehicleRepository vehicleRepository,
             TrailerRepository trailerRepository,
             GoodsRepository goodsRepository,
             EntityManager entityManager,
             RouteDirectionsService directionsService,
-            VehicleMaintenanceService maintenanceService
+            VehicleMaintenanceService maintenanceService,
+            ObjectMapper objectMapper
     ) {
         this.routeRepository = routeRepository;
+        this.routeArchiveRepository = routeArchiveRepository;
         this.driverRepository = driverRepository;
         this.vehicleRepository = vehicleRepository;
         this.trailerRepository = trailerRepository;
@@ -85,11 +94,19 @@ public class RouteService {
         this.entityManager = entityManager;
         this.directionsService = directionsService;
         this.maintenanceService = maintenanceService;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional(readOnly = true)
     public List<RouteResponse> findAll() {
-        return routeRepository.findAllByOrderByDepartureTimeAsc().stream()
+        return routeRepository.findAllByArchivedFalseOrderByDepartureTimeAsc().stream()
+                .map(RouteService::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<RouteResponse> findArchived() {
+        return routeRepository.findAllByArchivedTrueOrderByDepartureTimeDesc().stream()
                 .map(RouteService::toResponse)
                 .toList();
     }
@@ -109,6 +126,9 @@ public class RouteService {
 
     public RouteResponse recalculateDirections(@Positive Long id) {
         Route route = findRouteForUpdate(id);
+        if (route.isArchived()) {
+            throw new RouteConflictException("Archived routes cannot be changed.");
+        }
         List<String> cities = route.getStops().stream()
                 .sorted(Comparator.comparing(RouteStop::getStopOrder))
                 .map(RouteStop::getCity)
@@ -239,7 +259,7 @@ public class RouteService {
             throw new InvalidRouteException("Route details are required.");
         }
         Route route = findRouteForMutation(id);
-        if (route.getStatus() != RouteStatus.PLANNED) {
+        if (route.isArchived() || route.getStatus() != RouteStatus.PLANNED) {
             throw new RouteConflictException("Only planned routes can be edited.");
         }
         validateDepartureTime(request.departureTime());
@@ -261,6 +281,9 @@ public class RouteService {
         Map<Long, Goods> goodsById = goods.stream().collect(Collectors.toMap(Goods::getId, Function.identity()));
         for (Long goodsId : requestedGoodsIds) {
             Goods good = goodsById.get(goodsId);
+            if (good.isArchived()) {
+                throw new RouteConflictException("Archived goods " + goodsId + " cannot be assigned to a route.");
+            }
             if (good.getStatus() != GoodsStatus.UNASSIGNED
                     && !(originalGoodsIds.contains(goodsId) && good.getStatus() == GoodsStatus.ASSIGNED)) {
                 throw new RouteConflictException(
@@ -356,6 +379,9 @@ public class RouteService {
 
     public RouteResponse updateStatus(@Positive Long id, @Valid RouteStatusRequest request) {
         Route route = findRouteForMutation(id);
+        if (route.isArchived()) {
+            throw new RouteConflictException("Archived routes cannot be changed.");
+        }
         RouteStatus requestedStatus = request.status();
         if (requestedStatus == RouteStatus.ACTIVE) {
             activate(route);
@@ -425,6 +451,7 @@ public class RouteService {
         driver.markReturning();
         driverRepository.save(driver);
         routeRepository.saveAndFlush(route);
+        saveArchiveSnapshot(route);
     }
 
     private void cancel(Route route) {
@@ -482,6 +509,9 @@ public class RouteService {
             }
             route.markReturned(OffsetDateTime.now());
             routeRepository.save(route);
+            if (route.isArchived()) {
+                saveArchiveSnapshot(route);
+            }
             released++;
         }
         return released;
@@ -489,20 +519,40 @@ public class RouteService {
 
     public void delete(@Positive Long id) {
         Route route = findRouteForMutation(id);
-        if (route.getStatus() != RouteStatus.PLANNED && route.getStatus() != RouteStatus.CANCELLED) {
-            throw new RouteConflictException("Only PLANNED or CANCELLED routes can be deleted.");
+        if (route.getStatus() == RouteStatus.ACTIVE) {
+            throw new RouteConflictException("An ACTIVE route cannot be archived.");
         }
-        if (route.getStatus() == RouteStatus.CANCELLED
-                && route.getEstimatedReturnTime() != null && route.getReturnedAt() == null) {
-            throw new RouteConflictException("A cancelled route cannot be deleted while its resources are returning.");
-        }
-        for (Goods good : lockRouteGoods(route)) {
-            if (good.getStatus() == GoodsStatus.ASSIGNED || good.getStatus() == GoodsStatus.IN_TRANSIT) {
-                good.releaseFromRoute();
+        if (route.getStatus() == RouteStatus.PLANNED) {
+            List<Goods> goods = lockRouteGoods(route);
+            for (Goods good : goods) {
+                if (good.getStatus() == GoodsStatus.ASSIGNED || good.getStatus() == GoodsStatus.IN_TRANSIT) {
+                    good.releaseFromRoute();
+                }
             }
+            goodsRepository.saveAll(goods);
         }
-        routeRepository.delete(route);
-        routeRepository.flush();
+        route.archive();
+        routeRepository.saveAndFlush(route);
+        saveArchiveSnapshot(route);
+    }
+
+    private void saveArchiveSnapshot(Route route) {
+        try {
+            String snapshot = objectMapper.writeValueAsString(toResponse(route));
+            OffsetDateTime archivedAt = OffsetDateTime.now(ZoneOffset.UTC);
+            routeArchiveRepository.findByRouteId(route.getId())
+                    .ifPresentOrElse(
+                            existing -> {
+                                existing.update(archivedAt, snapshot);
+                                routeArchiveRepository.save(existing);
+                            },
+                            () -> routeArchiveRepository.save(
+                                    new RouteArchiveRecord(route.getId(), archivedAt, snapshot)
+                            )
+                    );
+        } catch (JacksonException exception) {
+            throw new IllegalStateException("Could not preserve the route archive snapshot.", exception);
+        }
     }
 
     private Trailer selectTrailer(
@@ -636,6 +686,9 @@ public class RouteService {
 
     private void ensureResourcesEligibleForPlanning(Driver driver, Vehicle vehicle) {
         maintenanceService.updateAutomaticMaintenanceState(vehicle, OffsetDateTime.now());
+        if (driver.isArchived() || vehicle.isArchived()) {
+            throw new RouteConflictException("Archived drivers and vehicles cannot be assigned to a route.");
+        }
         if (driver.getStatus() == DriverStatus.ON_LEAVE) {
             throw new RouteConflictException("A driver on leave cannot be assigned to a route.");
         }
@@ -736,9 +789,9 @@ public class RouteService {
 
     private static void ensureGoodsUnassigned(List<Goods> goods) {
         for (Goods good : goods) {
-            if (good.getStatus() != GoodsStatus.UNASSIGNED) {
+            if (good.isArchived() || good.getStatus() != GoodsStatus.UNASSIGNED) {
                 throw new RouteConflictException(
-                        "Goods " + good.getId() + " is not UNASSIGNED and cannot be added to this route."
+                        "Goods " + good.getId() + " is archived or not UNASSIGNED and cannot be added to this route."
                 );
             }
         }
@@ -836,6 +889,7 @@ public class RouteService {
                 route.getDistanceMeters(),
                 route.getDrivingDurationSeconds(),
                 route.getStatus(),
+                route.isArchived(),
                 stops,
                 geometry
         );

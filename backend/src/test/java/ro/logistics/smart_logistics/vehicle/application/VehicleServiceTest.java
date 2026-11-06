@@ -19,6 +19,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -86,6 +87,19 @@ class VehicleServiceTest {
         );
 
         verify(vehicleRepository, never()).saveAndFlush(any(Vehicle.class));
+    }
+
+    @Test
+    void deletingVehicleWithCompletedHistoryArchivesInsteadOfRemovingIt() {
+        Vehicle vehicle = vehicle();
+        when(vehicleRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(vehicle));
+        when(vehicleRepository.saveAndFlush(vehicle)).thenReturn(vehicle);
+
+        vehicleService.delete(12L);
+
+        assertTrue(vehicle.isArchived());
+        verify(vehicleRepository).saveAndFlush(vehicle);
+        verify(vehicleRepository, never()).delete(any(Vehicle.class));
     }
 
     private static VehicleRequest request(String licensePlate) {

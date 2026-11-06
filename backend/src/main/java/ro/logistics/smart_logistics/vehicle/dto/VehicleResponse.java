@@ -20,6 +20,7 @@ public record VehicleResponse(
         Integer currentMileageKm,
         TransmissionType transmissionType,
         boolean maintenanceAutoTriggered,
-        List<VehicleMaintenanceComponentResponse> maintenanceComponents
+        List<VehicleMaintenanceComponentResponse> maintenanceComponents,
+        boolean archived
 ) {
 }

@@ -5,8 +5,6 @@ import ro.logistics.smart_logistics.goods.domain.GoodsStatus;
 import ro.logistics.smart_logistics.goods.dto.GoodsDTO;
 import ro.logistics.smart_logistics.goods.dto.GoodsResponse;
 import ro.logistics.smart_logistics.goods.persistence.GoodsRepository;
-import ro.logistics.smart_logistics.route.persistence.RouteRepository;
-
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,16 +24,21 @@ public class GoodsService {
     private static final int TRACKING_CODE_ATTEMPTS = 100;
 
     private final GoodsRepository goodsRepository;
-    private final RouteRepository routeRepository;
 
-    public GoodsService(GoodsRepository goodsRepository, RouteRepository routeRepository) {
+    public GoodsService(GoodsRepository goodsRepository) {
         this.goodsRepository = goodsRepository;
-        this.routeRepository = routeRepository;
     }
 
     @Transactional(readOnly = true)
     public List<GoodsResponse> findAll() {
-        return goodsRepository.findAllByOrderByIdAsc().stream()
+        return goodsRepository.findAllByArchivedFalseOrderByIdAsc().stream()
+                .map(GoodsService::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<GoodsResponse> findArchived() {
+        return goodsRepository.findAllByArchivedTrueOrderByIdAsc().stream()
                 .map(GoodsService::toResponse)
                 .toList();
     }
@@ -43,6 +46,7 @@ public class GoodsService {
     @Transactional(readOnly = true)
     public List<GoodsResponse> findUnassigned() {
         return goodsRepository.findAllByStatusOrderByIdAsc(GoodsStatus.UNASSIGNED).stream()
+                .filter(goods -> !goods.isArchived())
                 .map(GoodsService::toResponse)
                 .toList();
     }
@@ -101,11 +105,11 @@ public class GoodsService {
 
     public void delete(@Positive Long id) {
         Goods goods = lockGoods(id);
-        ensureEditable(goods);
-        if (routeRepository.existsByStops_Goods_Id(id)) {
-            throw new GoodsInUseException(id);
+        if (goods.getStatus() == GoodsStatus.ASSIGNED || goods.getStatus() == GoodsStatus.IN_TRANSIT) {
+            throw new GoodsLockedException(id);
         }
-        goodsRepository.delete(goods);
+        goods.archiveRecord();
+        goodsRepository.saveAndFlush(goods);
     }
 
     public void deleteGoodsList(List<Goods> goodsList) {
@@ -191,7 +195,7 @@ public class GoodsService {
     }
 
     private void ensureEditable(Goods goods) {
-        if (goods.getStatus() != GoodsStatus.UNASSIGNED) {
+        if (goods.getStatus() != GoodsStatus.UNASSIGNED || goods.isArchived()) {
             throw new GoodsLockedException(goods.getId());
         }
     }
@@ -208,7 +212,8 @@ public class GoodsService {
                 goods.getVolumeM3(),
                 goods.getPickupCity(),
                 goods.getDeliveryCity(),
-                goods.getStatus()
+                goods.getStatus(),
+                goods.isArchived()
         );
     }
 }

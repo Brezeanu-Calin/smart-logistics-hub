@@ -16,6 +16,7 @@ public record GoodsResponse(
         Double volumeM3,
         String pickupCity,
         String deliveryCity,
-        GoodsStatus status
+        GoodsStatus status,
+        boolean archived
 ) {
 }

@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 import ro.logistics.smart_logistics.notification.application.PushNotificationService;
 import ro.logistics.smart_logistics.notification.dto.PushConfigResponse;
 import ro.logistics.smart_logistics.notification.dto.PushSubscriptionRequest;
+import ro.logistics.smart_logistics.notification.dto.MobilePushSubscriptionRequest;
 
 @RestController
 @RequestMapping("/api/notifications")
@@ -37,5 +38,17 @@ public class PushNotificationController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void unsubscribe(@Valid @RequestBody PushSubscriptionRequest request) {
         notificationService.unsubscribe(request);
+    }
+
+    @PostMapping("/mobile-subscription")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void subscribeMobile(@Valid @RequestBody MobilePushSubscriptionRequest request) {
+        notificationService.subscribeMobile(request);
+    }
+
+    @DeleteMapping("/mobile-subscription")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void unsubscribeMobile(@Valid @RequestBody MobilePushSubscriptionRequest request) {
+        notificationService.unsubscribeMobile(request);
     }
 }

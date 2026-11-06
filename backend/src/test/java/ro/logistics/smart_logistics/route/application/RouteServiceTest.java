@@ -9,6 +9,7 @@ import ro.logistics.smart_logistics.goods.domain.GoodsStatus;
 import ro.logistics.smart_logistics.goods.domain.GoodsType;
 import ro.logistics.smart_logistics.goods.persistence.GoodsRepository;
 import ro.logistics.smart_logistics.route.domain.Route;
+import ro.logistics.smart_logistics.route.domain.RouteArchiveRecord;
 import ro.logistics.smart_logistics.route.domain.RouteStatus;
 import ro.logistics.smart_logistics.route.domain.RouteStop;
 import ro.logistics.smart_logistics.route.domain.RouteStopType;
@@ -17,6 +18,7 @@ import ro.logistics.smart_logistics.route.dto.RouteCoordinate;
 import ro.logistics.smart_logistics.route.dto.RouteStatusRequest;
 import ro.logistics.smart_logistics.route.dto.RouteStopRequest;
 import ro.logistics.smart_logistics.route.persistence.RouteRepository;
+import ro.logistics.smart_logistics.route.persistence.RouteArchiveRecordRepository;
 import ro.logistics.smart_logistics.trailer.domain.Trailer;
 import ro.logistics.smart_logistics.trailer.domain.TrailerStatus;
 import ro.logistics.smart_logistics.trailer.domain.TrailerType;
@@ -44,6 +46,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -55,6 +58,8 @@ import static org.mockito.Mockito.when;
 class RouteServiceTest {
     @Mock
     private RouteRepository routeRepository;
+    @Mock
+    private RouteArchiveRecordRepository routeArchiveRepository;
     @Mock
     private DriverRepository driverRepository;
     @Mock
@@ -69,6 +74,8 @@ class RouteServiceTest {
     private RouteDirectionsService directionsService;
     @Mock
     private VehicleMaintenanceService maintenanceService;
+    @Mock
+    private tools.jackson.databind.ObjectMapper objectMapper;
 
     @InjectMocks
     private RouteService routeService;
@@ -412,6 +419,7 @@ class RouteServiceTest {
         routeService.updateStatus(8L, new RouteStatusRequest(RouteStatus.COMPLETED));
 
         assertEquals(RouteStatus.COMPLETED, route.getStatus());
+        assertTrue(route.isArchived());
         assertEquals(DriverStatus.RETURNING, driver.getStatus());
         assertEquals(VehicleStatus.IN_TRANSIT, vehicle.getStatus());
         assertEquals(GoodsStatus.ARCHIVED, goods.getStatus());
@@ -497,8 +505,40 @@ class RouteServiceTest {
         routeService.delete(8L);
 
         assertEquals(GoodsStatus.UNASSIGNED, goods.getStatus());
-        verify(routeRepository).delete(route);
-        verify(routeRepository).flush();
+        assertTrue(route.isArchived());
+        verify(routeRepository).saveAndFlush(route);
+        verify(routeArchiveRepository).save(any(RouteArchiveRecord.class));
+        verify(routeRepository, never()).delete(route);
+    }
+
+    @Test
+    void deletingCompletedRouteKeepsItArchivedForHistory() throws Exception {
+        Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.B));
+        setId(driver, 1L);
+        Vehicle vehicle = new Vehicle("VAN-1", VehicleType.VAN, "Make", "Model", 2022, 5000.0, 20.0, 1000);
+        setId(vehicle, 2L);
+        Goods goods = goods(3L, 4000.0, 10.0);
+        goods.assignToRoute();
+        goods.startTransit();
+        goods.markDelivered();
+        goods.archive();
+        Route route = route(driver, vehicle, goods, RouteStatus.ACTIVE);
+        route.complete();
+        route.markReturned(OffsetDateTime.now());
+        setId(route, 8L);
+        when(routeRepository.findById(8L)).thenReturn(Optional.of(route));
+        when(routeRepository.findByIdForUpdate(8L)).thenReturn(Optional.of(route));
+        when(driverRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(driver));
+        when(vehicleRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(vehicle));
+        when(goodsRepository.findAllByIdForUpdate(List.of(3L))).thenReturn(List.of(goods));
+
+        routeService.delete(8L);
+
+        assertTrue(route.isArchived());
+        assertEquals(RouteStatus.COMPLETED, route.getStatus());
+        assertEquals(GoodsStatus.ARCHIVED, goods.getStatus());
+        verify(routeArchiveRepository).save(any(RouteArchiveRecord.class));
+        verify(routeRepository, never()).delete(route);
     }
 
     @Test

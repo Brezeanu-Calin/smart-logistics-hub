@@ -17,19 +17,27 @@ import org.springframework.web.server.ResponseStatusException;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 import ro.logistics.smart_logistics.notification.domain.PushSubscription;
+import ro.logistics.smart_logistics.notification.domain.MobilePushSubscription;
 import ro.logistics.smart_logistics.notification.dto.PushConfigResponse;
 import ro.logistics.smart_logistics.notification.dto.PushSubscriptionRequest;
+import ro.logistics.smart_logistics.notification.dto.MobilePushSubscriptionRequest;
+import ro.logistics.smart_logistics.notification.persistence.MobilePushSubscriptionRepository;
 import ro.logistics.smart_logistics.notification.persistence.PushSubscriptionRepository;
 
 import java.io.IOException;
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.MessageDigest;
 import java.security.Security;
+import java.time.Duration;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
@@ -41,22 +49,33 @@ public class PushNotificationService {
             "push.apple.com",
             "push.services.mozilla.com"
     );
+    private static final URI EXPO_PUSH_ENDPOINT = URI.create("https://exp.host/--/api/v2/push/send");
+    private static final java.util.regex.Pattern EXPO_TOKEN_PATTERN =
+            java.util.regex.Pattern.compile("^(?:Expo|Exponent)PushToken\\[[A-Za-z0-9_-]+\\]$");
+    private static final String EXPO_DEVICE_NOT_REGISTERED = "DeviceNotRegistered";
 
     private final PushSubscriptionRepository subscriptionRepository;
+    private final MobilePushSubscriptionRepository mobileSubscriptionRepository;
     private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
     private final String publicKey;
     private final String privateKey;
     private final String subject;
 
     public PushNotificationService(
             PushSubscriptionRepository subscriptionRepository,
+            MobilePushSubscriptionRepository mobileSubscriptionRepository,
             ObjectMapper objectMapper,
             @Value("${notifications.vapid.public-key:}") String publicKey,
             @Value("${notifications.vapid.private-key:}") String privateKey,
             @Value("${notifications.vapid.subject:mailto:admin@example.com}") String subject
     ) {
         this.subscriptionRepository = subscriptionRepository;
+        this.mobileSubscriptionRepository = mobileSubscriptionRepository;
         this.objectMapper = objectMapper;
+        this.httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .build();
         this.publicKey = publicKey.trim();
         this.privateKey = privateKey.trim();
         this.subject = subject.trim();
@@ -99,12 +118,27 @@ public class PushNotificationService {
         subscriptionRepository.deleteByEndpointHash(endpointHash(request.endpoint()));
     }
 
+    public void subscribeMobile(MobilePushSubscriptionRequest request) {
+        validateExpoToken(request.token());
+        mobileSubscriptionRepository.findByExpoPushToken(request.token())
+                .orElseGet(() -> mobileSubscriptionRepository.save(new MobilePushSubscription(request.token())));
+    }
+
+    public void unsubscribeMobile(MobilePushSubscriptionRequest request) {
+        validateExpoToken(request.token());
+        mobileSubscriptionRepository.deleteByExpoPushToken(request.token());
+    }
+
     @Async
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void send(OperationalNotification notification) {
-        if (!isConfigured()) {
-            return;
+        if (isConfigured()) {
+            sendWebPush(notification);
         }
+        sendExpoPush(notification);
+    }
+
+    private void sendWebPush(OperationalNotification notification) {
         List<PushSubscription> subscriptions = subscriptionRepository.findAll();
         if (subscriptions.isEmpty()) {
             return;
@@ -147,6 +181,68 @@ public class PushNotificationService {
         }
     }
 
+    private void sendExpoPush(OperationalNotification notification) {
+        List<MobilePushSubscription> subscriptions = mobileSubscriptionRepository.findAll();
+        if (subscriptions.isEmpty()) {
+            return;
+        }
+        for (MobilePushSubscription subscription : subscriptions) {
+            Map<String, Object> payload = Map.of(
+                    "to", subscription.getExpoPushToken(),
+                    "title", notification.title(),
+                    "body", notification.body(),
+                    "data", Map.of("path", notification.path()),
+                    "sound", "default"
+            );
+            try {
+                String json = objectMapper.writeValueAsString(payload);
+                HttpRequest request = HttpRequest.newBuilder(EXPO_PUSH_ENDPOINT)
+                        .timeout(Duration.ofSeconds(10))
+                        .header("Accept", "application/json")
+                        .header("Content-Type", "application/json")
+                        .POST(HttpRequest.BodyPublishers.ofString(json))
+                        .build();
+                java.net.http.HttpResponse<String> response =
+                        httpClient.send(request, BodyHandlers.ofString());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    logger.warn(
+                            "Expo push provider rejected notification for mobile token {} with HTTP {}.",
+                            tokenHash(subscription.getExpoPushToken()),
+                            response.statusCode()
+                    );
+                    continue;
+                }
+                ExpoPushTicket ticket = objectMapper.readValue(response.body(), ExpoPushTicket.class);
+                if (ticket.data() == null) {
+                    logger.warn(
+                            "Expo push provider returned no ticket for mobile token {}.",
+                            tokenHash(subscription.getExpoPushToken())
+                    );
+                } else if ("error".equalsIgnoreCase(ticket.data().status())) {
+                    logger.warn(
+                            "Expo push provider rejected notification for mobile token {}: {}.",
+                            tokenHash(subscription.getExpoPushToken()),
+                            ticket.data().message()
+                    );
+                    if (ticket.data().details() != null
+                            && EXPO_DEVICE_NOT_REGISTERED.equals(ticket.data().details().error())) {
+                        mobileSubscriptionRepository.deleteByExpoPushToken(subscription.getExpoPushToken());
+                    }
+                }
+            } catch (JacksonException | IOException exception) {
+                logger.error(
+                        "Could not encode or send an Expo push notification for mobile token {}.",
+                        tokenHash(subscription.getExpoPushToken()),
+                        exception
+                );
+            } catch (InterruptedException exception) {
+                Thread.currentThread().interrupt();
+                logger.warn("Expo push delivery was interrupted.");
+                return;
+            }
+        }
+    }
+
     private boolean isConfigured() {
         return !publicKey.isEmpty() && !privateKey.isEmpty();
     }
@@ -176,6 +272,25 @@ public class PushNotificationService {
         } catch (IllegalArgumentException exception) {
             throw new InvalidPushSubscriptionException("Push subscription endpoint or keys are malformed.", exception);
         }
+    }
+
+    private static void validateExpoToken(String token) {
+        if (token == null || token.length() > 256 || !EXPO_TOKEN_PATTERN.matcher(token).matches()) {
+            throw new InvalidPushSubscriptionException("Mobile push token is not a valid Expo push token.");
+        }
+    }
+
+    private static String tokenHash(String token) {
+        return endpointHash(token);
+    }
+
+    private record ExpoPushTicket(ExpoPushTicketData data) {
+    }
+
+    private record ExpoPushTicketData(String status, String id, String message, ExpoPushTicketDetails details) {
+    }
+
+    private record ExpoPushTicketDetails(String error) {
     }
 
     private static boolean isAllowedPushHost(String host) {

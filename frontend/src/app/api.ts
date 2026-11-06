@@ -10,6 +10,7 @@ export interface Driver {
   email: string
   licenseCategories: string[]
   status: 'AVAILABLE' | 'ON_LEAVE' | 'IN_TRANSIT' | 'RETURNING'
+  archived: boolean
 }
 
 export interface DriverRequest {
@@ -32,6 +33,7 @@ export interface Vehicle {
   transmissionType: 'MANUAL' | 'AUTOMATIC' | 'AMT'
   maintenanceAutoTriggered: boolean
   maintenanceComponents: VehicleMaintenanceComponent[]
+  archived: boolean
 }
 
 export interface VehicleMaintenanceComponent {
@@ -154,6 +156,7 @@ export interface Goods {
   pickupCity: string
   deliveryCity: string
   status: 'UNASSIGNED' | 'ASSIGNED' | 'IN_TRANSIT' | 'DELIVERED' | 'ARCHIVED'
+  archived: boolean
 }
 
 export interface GoodsRequest {
@@ -207,6 +210,7 @@ export interface Route {
   distanceMeters: number
   drivingDurationSeconds: number
   status: 'PLANNED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED'
+  archived: boolean
   stops: RouteStop[]
   geometry: RouteCoordinate[]
 }

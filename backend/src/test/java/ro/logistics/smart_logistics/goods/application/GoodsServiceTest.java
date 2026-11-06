@@ -97,6 +97,19 @@ class GoodsServiceTest {
     }
 
     @Test
+    void deletingInactiveGoodsArchivesItWithoutRemovingItsHistory() {
+        Goods unassigned = goods();
+        when(goodsRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(unassigned));
+        when(goodsRepository.saveAndFlush(unassigned)).thenReturn(unassigned);
+
+        goodsService.delete(12L);
+
+        assertTrue(unassigned.isArchived());
+        verify(goodsRepository).saveAndFlush(unassigned);
+        verify(goodsRepository, never()).delete(any(Goods.class));
+    }
+
+    @Test
     void routeLifecycleAdvancesGoodsStatus() {
         Goods goods = goods();
         goods.assignToRoute();

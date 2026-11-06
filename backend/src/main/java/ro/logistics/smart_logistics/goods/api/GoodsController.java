@@ -37,6 +37,11 @@ public class GoodsController {
         return goodsService.findAll();
     }
 
+    @GetMapping("/archive")
+    public List<GoodsResponse> findArchived() {
+        return goodsService.findArchived();
+    }
+
     @GetMapping("/unassigned")
     public List<GoodsResponse> findUnassigned() {
         return goodsService.findUnassigned();

@@ -39,6 +39,11 @@ public class VehicleController {
         return vehicleService.findAll();
     }
 
+    @GetMapping("/archive")
+    public List<VehicleResponse> findArchived() {
+        return vehicleService.findArchived();
+    }
+
     @GetMapping("/{id}")
     public VehicleResponse findById(@PathVariable @Positive Long id) {
         return vehicleService.findById(id);

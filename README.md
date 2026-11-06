@@ -100,12 +100,30 @@ the automatic fallback is `http://10.0.2.2:8080/api`; for the iOS simulator, it
 is `http://localhost:8080/api`. The API URL is bundled into the development app,
 so restart Expo after changing it.
 
-The native app includes the operations dashboard, route planning and lifecycle
-with road maps and simulated positions, freight, drivers, vehicles and trailers,
-maintenance records, finance reports, and the assistant's confirm-before-write
-operations. It talks directly to the same backend and currently has no real
-authentication. Backend Web Push subscriptions are supported by the PWA; native
-Expo push registration is not yet connected.
+The native app includes filtered operational lists, forms that submit changes to
+the backend, route planning and lifecycle with road maps and simulated positions,
+finance reports, and native push notifications for route-planned, route-cancelled,
+delivery-confirmed, and maintenance-due events. It talks directly to the same
+backend and currently has no real authentication. The app also exposes archived
+routes, drivers, vehicles, and freight separately from operational lists.
+
+Native push uses Expo's push service. Configure an EAS project ID in the build
+environment as `EXPO_PUBLIC_EAS_PROJECT_ID`, and configure FCM and APNs
+credentials for production builds in EAS. Push registration requires a physical
+Android or iOS device and notification permission; use an Expo development or
+production build for remote push testing (Expo Go is not sufficient). Link the
+app to an EAS project with `npx eas-cli@latest init`, then build with
+`npx eas-cli@latest build --profile development --platform android` or
+`--platform ios`. The backend stores only opted-in Expo push tokens and sends
+the existing operational notification events to every subscribed mobile device.
+
+Completed routes and delivered freight are archived automatically. Archiving or
+deleting a non-active route creates a durable route snapshot; deleting an
+inactive driver, vehicle, or freight record archives it instead of removing its
+database row. Archived records remain available for route history and financial
+analysis, and are hidden from operational lists and assignment choices. Active
+routes and resources currently assigned to planned/active routes cannot be
+archived.
 
 ## Route lifecycle
 

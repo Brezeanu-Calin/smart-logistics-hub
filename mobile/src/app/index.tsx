@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Constants from 'expo-constants'
+import * as Device from 'expo-device'
+import * as Notifications from 'expo-notifications'
+import { AndroidImportance } from 'expo-notifications'
+import * as SecureStore from 'expo-secure-store'
 import { StatusBar } from 'expo-status-bar'
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router'
 import {
@@ -49,6 +54,15 @@ type FormModal = {
   trailerComponent?: TrailerMaintenanceComponent
 }
 type ChatLine = AssistantMessage & { action?: AssistantAction }
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+})
 
 const TABS: Tab[] = ['Home', 'Routes', 'Freight', 'Drivers', 'Fleet', 'Service', 'Finance']
 const ACCENT = '#f59e0b'
@@ -152,10 +166,14 @@ function MobileApp() {
   const screenParam = Array.isArray(params.screen) ? params.screen[0] : params.screen
   const tab = TABS.find((item) => item.toLowerCase() === screenParam?.toLowerCase()) ?? 'Home'
   const [drivers, setDrivers] = useState<Driver[]>([])
+  const [archivedDrivers, setArchivedDrivers] = useState<Driver[]>([])
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
+  const [archivedVehicles, setArchivedVehicles] = useState<Vehicle[]>([])
   const [trailers, setTrailers] = useState<Trailer[]>([])
   const [goods, setGoods] = useState<Goods[]>([])
+  const [archivedGoods, setArchivedGoods] = useState<Goods[]>([])
   const [routes, setRoutes] = useState<Route[]>([])
+  const [archivedRoutes, setArchivedRoutes] = useState<Route[]>([])
   const [simulationPositions, setSimulationPositions] = useState<Record<number, RouteSimulationPosition>>({})
   const [finance, setFinance] = useState<FinanceReport | null>(null)
   const [fromDate, setFromDate] = useState(() => dateInputValue(new Date(new Date().getFullYear(), new Date().getMonth(), 1)))
@@ -164,6 +182,9 @@ function MobileApp() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [mobilePushToken, setMobilePushToken] = useState<string | null>(null)
+  const [pushBusy, setPushBusy] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
   const [search, setSearch] = useState('')
   const [modal, setModal] = useState<FormModal | null>(null)
   const [selectedDriverId, setSelectedDriverId] = useState<number | null>(null)
@@ -177,42 +198,53 @@ function MobileApp() {
   const [pendingAction, setPendingAction] = useState<AssistantAction | null>(null)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [expandedHealth, setExpandedHealth] = useState<Record<string, boolean>>({})
-  const selectedDriver = drivers.find((driver) => driver.id === selectedDriverId) ?? null
-  const driverRoutes = selectedDriver ? routes.filter((route) => route.driverId === selectedDriver.id) : []
-  const selectedFleetVehicle = vehicles.find((vehicle) => vehicle.id === selectedFleetVehicleId) ?? null
-  const selectedFleetRoutes = routes
+  const selectedDriver = [...drivers, ...archivedDrivers].find((driver) => driver.id === selectedDriverId) ?? null
+  const allRoutes = [...routes, ...archivedRoutes]
+  const allGoods = [...goods, ...archivedGoods]
+  const driverRoutes = selectedDriver ? allRoutes.filter((route) => route.driverId === selectedDriver.id) : []
+  const selectedFleetVehicle = [...vehicles, ...archivedVehicles].find((vehicle) => vehicle.id === selectedFleetVehicleId) ?? null
+  const selectedFleetRoutes = allRoutes
     .filter((route) => route.vehicleId === selectedFleetVehicleId)
     .sort((first, second) => second.departureTime.localeCompare(first.departureTime))
   const selectedVehicleProfitability = finance?.vehicles.find((vehicle) => vehicle.vehicleId === selectedFleetVehicleId) ?? null
 
-  const driverForVehicle = useCallback((vehicleId: number) => routes.find((route) =>
+  const driverForVehicle = useCallback((vehicleId: number) => [...routes, ...archivedRoutes].find((route) =>
     route.vehicleId === vehicleId
     && (route.status === 'PLANNED' || route.status === 'ACTIVE'
       || (route.status === 'COMPLETED' && route.estimatedReturnTime && !route.returnedAt)),
-  ), [routes])
+  ), [archivedRoutes, routes])
 
   const setTab = (nextTab: Tab) => {
     router.setParams({ screen: nextTab.toLowerCase() })
     setSearch('')
     setSelectedFleetVehicleId(null)
+    setShowArchived(false)
   }
 
   const fetchData = useCallback(async () => {
-    const [nextDrivers, nextVehicles, nextTrailers, nextGoods, nextRoutes, nextFinance, positions] = await Promise.all([
+    const [nextDrivers, nextArchivedDrivers, nextVehicles, nextArchivedVehicles, nextTrailers, nextGoods, nextArchivedGoods, nextRoutes, nextArchivedRoutes, nextFinance, positions] = await Promise.all([
       request<Driver[]>('/drivers'),
+      request<Driver[]>('/drivers/archive'),
       request<Vehicle[]>('/vehicles'),
+      request<Vehicle[]>('/vehicles/archive'),
       request<Trailer[]>('/trailers'),
       request<Goods[]>('/goods'),
+      request<Goods[]>('/goods/archive'),
       request<Route[]>('/routes'),
+      request<Route[]>('/routes/archive'),
       request<FinanceReport>(`/finance?from=${encodeURIComponent(fromDate)}&to=${encodeURIComponent(toDate)}`),
       request<RouteSimulationPosition[]>('/routes/simulations'),
     ])
     setDrivers(nextDrivers)
+    setArchivedDrivers(nextArchivedDrivers)
     setVehicles(nextVehicles)
+    setArchivedVehicles(nextArchivedVehicles)
     setFleetPage(1)
     setTrailers(nextTrailers)
     setGoods(nextGoods)
+    setArchivedGoods(nextArchivedGoods)
     setRoutes(nextRoutes)
+    setArchivedRoutes(nextArchivedRoutes)
     setFinance(nextFinance)
     setSimulationPositions(Object.fromEntries(positions.map((position) => [position.routeId, position])))
   }, [fromDate, toDate])
@@ -253,6 +285,93 @@ function MobileApp() {
     return () => clearTimeout(timer)
   }, [error, notice])
 
+  useEffect(() => {
+    const received = Notifications.addNotificationReceivedListener((notification) => {
+      const { title, body } = notification.request.content
+      setNotice([title, body].filter(Boolean).join(': ') || 'A logistics update arrived.')
+    })
+    const response = Notifications.addNotificationResponseReceivedListener(() => {
+      router.setParams({ screen: 'routes' })
+    })
+    return () => {
+      received.remove()
+      response.remove()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return
+    let active = true
+    void SecureStore.getItemAsync('haulmaster-mobile-push-token')
+      .then(async (token) => {
+        if (!active || !token) return
+        const permission = await Notifications.getPermissionsAsync()
+        if (!permission.granted) {
+          await send('/notifications/mobile-subscription', 'DELETE', { token })
+          await SecureStore.deleteItemAsync('haulmaster-mobile-push-token')
+          return
+        }
+        setMobilePushToken(token)
+      })
+      .catch((storageError: unknown) => {
+        if (active) setError(storageError instanceof Error ? storageError.message : 'Could not load mobile notification settings.')
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  async function toggleMobilePush() {
+    if (pushBusy) return
+    setPushBusy(true)
+    setError('')
+    try {
+      if (mobilePushToken) {
+        await send('/notifications/mobile-subscription', 'DELETE', { token: mobilePushToken })
+        setMobilePushToken(null)
+        await SecureStore.deleteItemAsync('haulmaster-mobile-push-token')
+        setNotice('Mobile push notifications disabled on this device.')
+        return
+      }
+      if (Platform.OS === 'web' || !Device.isDevice) {
+        throw new Error('Push notifications require a physical Android or iOS device.')
+      }
+      const projectId = Constants.easConfig?.projectId
+        ?? Constants.expoConfig?.extra?.eas?.projectId
+        ?? process.env.EXPO_PUBLIC_EAS_PROJECT_ID
+      if (!projectId) {
+        throw new Error('Set the Expo EAS project ID before enabling mobile push notifications.')
+      }
+      if (Platform.OS === 'android') {
+        await Notifications.setNotificationChannelAsync('default', {
+          name: 'Logistics updates',
+          importance: AndroidImportance.HIGH,
+        })
+      }
+      const currentPermission = await Notifications.getPermissionsAsync()
+      const permission = currentPermission.granted
+        ? currentPermission
+        : await Notifications.requestPermissionsAsync()
+      if (!permission.granted) {
+        throw new Error('Notification permission was not granted.')
+      }
+      const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data
+      await SecureStore.setItemAsync('haulmaster-mobile-push-token', token)
+      try {
+        await send('/notifications/mobile-subscription', 'POST', { token })
+      } catch (subscriptionError) {
+        await SecureStore.deleteItemAsync('haulmaster-mobile-push-token')
+        throw subscriptionError
+      }
+      setMobilePushToken(token)
+      setNotice('Mobile push notifications enabled.')
+    } catch (pushError) {
+      setError(pushError instanceof Error ? pushError.message : 'Could not configure mobile push notifications.')
+    } finally {
+      setPushBusy(false)
+    }
+  }
+
   const counts = useMemo(() => ({
     activeRoutes: routes.filter((route) => route.status === 'ACTIVE').length,
     availableDrivers: drivers.filter((driver) => driver.status === 'AVAILABLE'
@@ -267,14 +386,14 @@ function MobileApp() {
   }), [drivers, goods, routes, trailers, vehicles])
   const filteredFleetVehicles = useMemo(() => {
     const query = search.trim().toLowerCase()
-    return vehicles
+    return (showArchived ? archivedVehicles : vehicles)
       .filter((vehicle) => `${vehicle.licensePlate} ${vehicle.make} ${vehicle.model} ${vehicle.vehicleType} ${vehicle.status} ${driverForVehicle(vehicle.id)?.driverName ?? ''}`.toLowerCase().includes(query))
       .sort((first, second) => {
         if (fleetSort === 'MILEAGE') return second.currentMileageKm - first.currentMileageKm
         if (fleetSort === 'STATUS') return first.status.localeCompare(second.status) || first.licensePlate.localeCompare(second.licensePlate)
         return first.licensePlate.localeCompare(second.licensePlate)
       })
-  }, [driverForVehicle, fleetSort, search, vehicles])
+  }, [archivedVehicles, driverForVehicle, fleetSort, search, showArchived, vehicles])
   const fleetPageCount = Math.max(1, Math.ceil(filteredFleetVehicles.length / 10))
   const paginatedFleetVehicles = filteredFleetVehicles.slice((fleetPage - 1) * 10, fleetPage * 10)
 
@@ -284,10 +403,8 @@ function MobileApp() {
     route.vehicleId === id && (route.status === 'PLANNED' || route.status === 'ACTIVE'))
   const hasScheduledTrailerRoute = (id: number) => routes.some((route) =>
     route.trailerId === id && (route.status === 'PLANNED' || route.status === 'ACTIVE'))
-  const hasDriverHistory = (id: number) => routes.some((route) => route.driverId === id)
-  const hasVehicleHistory = (id: number) => routes.some((route) => route.vehicleId === id)
   const hasTrailerHistory = (id: number) => routes.some((route) => route.trailerId === id)
-  const hasGoodsHistory = (id: number) => routes.some((route) =>
+  const hasGoodsHistory = (id: number) => allRoutes.some((route) =>
     route.stops.some((stop) => stop.goodsId === id))
 
   function openForm(kind: FormKind, value: object = {}, extra: Partial<FormModal> = {}) {
@@ -840,6 +957,14 @@ function MobileApp() {
       >
         {tab === 'Home' && (
           <>
+            <Card title="Mobile notifications" subtitle="Receive route planning, cancellation, and delivery updates on this device.">
+              <Button
+                label={pushBusy ? 'Working…' : mobilePushToken ? 'Disable push notifications' : 'Enable push notifications'}
+                onPress={() => void toggleMobilePush()}
+                secondary={Boolean(mobilePushToken)}
+                disabled={pushBusy}
+              />
+            </Card>
             <View style={styles.statsGrid}>
               <Stat label="Active routes" value={counts.activeRoutes} tone="purple" />
               <Stat label="Drivers ready" value={counts.availableDrivers} tone="green" />
@@ -847,7 +972,7 @@ function MobileApp() {
               <Stat label="Unassigned freight" value={counts.unassignedGoods} tone="orange" />
             </View>
             <Card title="Recent routes" subtitle="Latest dispatches and delivery progress" action={<LinkButton label="All routes" onPress={() => setTab('Routes')} />}>
-              {!routes.length ? <Empty>No routes yet. Plan a route when freight is ready.</Empty> : routes.slice(0, 4).map((route) => <RouteCard key={route.id} route={route} goods={goods} onAction={handleRouteAction} onDriverPress={setSelectedDriverId} />)}
+              {!routes.length ? <Empty>No routes yet. Plan a route when freight is ready.</Empty> : routes.slice(0, 4).map((route) => <RouteCard key={route.id} route={route} goods={allGoods} onAction={handleRouteAction} onDriverPress={setSelectedDriverId} />)}
             </Card>
             <Card title="Quick actions">
               <View style={styles.actionGrid}>
@@ -861,70 +986,77 @@ function MobileApp() {
 
         {tab === 'Routes' && (
           <>
-            <View style={styles.headingRow}><Text style={styles.sectionIntro}>Saved routes, stop order, and route-map simulation.</Text><Button label="+ Plan" onPress={() => openForm('route', { departureTime: dateTimeInputValue(new Date(Date.now() + 60_000)), goodsIds: '' })} /></View>
+            <View style={styles.headingRow}><Text style={styles.sectionIntro}>{showArchived ? 'Archived route history; completed routes are retained for finance analysis.' : 'Saved routes, stop order, and route-map simulation.'}</Text><View style={styles.rowActions}><LinkButton label={showArchived ? 'Show operational routes' : 'View route history'} onPress={() => setShowArchived((value) => !value)} />{!showArchived ? <Button label="+ Plan" onPress={() => openForm('route', { departureTime: dateTimeInputValue(new Date(Date.now() + 60_000)), goodsIds: '' })} /> : null}</View></View>
             <Card title="Active route map" subtitle="Positions are simulated from saved road geometry, not GPS.">
               {routes.filter((route) => route.status === 'ACTIVE').length === 0
                 ? <Empty>No active routes.</Empty>
                 : routes.filter((route) => route.status === 'ACTIVE').map((route) => <ActiveRouteCard key={route.id} route={route} position={simulationPositions[route.id]} onDriverPress={setSelectedDriverId} />)}
             </Card>
-            {routes.map((route) => <RouteCard key={route.id} route={route} goods={goods} onAction={handleRouteAction} onEdit={editRoute} onDriverPress={setSelectedDriverId} expanded />)}
+            {(showArchived ? archivedRoutes : routes).map((route) => <RouteCard key={route.id} route={route} goods={allGoods} onAction={handleRouteAction} onEdit={showArchived ? undefined : editRoute} onDriverPress={setSelectedDriverId} expanded />)}
+            {!(showArchived ? archivedRoutes : routes).length ? <Empty>{showArchived ? 'No archived routes.' : 'No operational routes yet.'}</Empty> : null}
           </>
         )}
 
         {tab === 'Freight' && (
           <>
-            <View style={styles.headingRow}><Text style={styles.sectionIntro}>{goods.length} shipment records</Text><Button label="+ Add" onPress={() => openForm('freight', { goodsType: 'GENERAL', weightKg: '1', volumeM3: '1' })} /></View>
+            <View style={styles.headingRow}><Text style={styles.sectionIntro}>{showArchived ? archivedGoods.length : goods.length} {showArchived ? 'archived' : 'active'} shipment records; retained for analysis</Text><View style={styles.rowActions}><LinkButton label={showArchived ? 'Show active freight' : 'View archived freight'} onPress={() => setShowArchived((value) => !value)} />{!showArchived ? <Button label="+ Add" onPress={() => openForm('freight', { goodsType: 'GENERAL', weightKg: '1', volumeM3: '1' })} /> : null}</View></View>
             <SearchInput value={search} onChangeText={setSearch} placeholder="Search freight, client, or city" />
-            {goods.filter((item) => filtered(`${item.trackingCode} ${item.clientName} ${item.pickupCity} ${item.deliveryCity} ${item.status}`)).map((item) => (
+            {(showArchived ? archivedGoods : goods).filter((item) => filtered(`${item.trackingCode} ${item.clientName} ${item.pickupCity} ${item.deliveryCity} ${item.status}`)).map((item) => (
               <Card key={item.id} title={`${item.trackingCode} · ${item.clientName}`} trailing={<Badge value={item.status} />}>
                 <Text style={styles.bodyText}>{item.pickupCity} → {item.deliveryCity}</Text>
                 <Text style={styles.mutedText}>{displayStatus(item.goodsType)} · {item.weightKg.toLocaleString()} kg · {item.volumeM3} m³ · {money(item.revenueEur)}</Text>
-                {item.status === 'UNASSIGNED' && !hasGoodsHistory(item.id) ? (
+                {showArchived ? <Text style={styles.mutedText}>Archived; retained for route and financial history.</Text> : null}
+                {!showArchived && item.status === 'UNASSIGNED' && !hasGoodsHistory(item.id) ? (
                   <View style={styles.rowActions}>
                     <LinkButton label="Edit" onPress={() => openForm('freight', item, { editingId: item.id })} />
-                    <LinkButton label="Delete" danger onPress={() => confirm('Delete freight?', `Delete ${item.trackingCode}?`, () => void mutate(() => send(`/goods/${item.id}`, 'DELETE'), 'Freight deleted.'))} />
                   </View>
                 ) : null}
+                {!showArchived && item.status !== 'ASSIGNED' && item.status !== 'IN_TRANSIT' ? <LinkButton label="Archive" danger onPress={() => confirm('Archive freight?', `Archive ${item.trackingCode}? Its financial and route records will be retained.`, () => void mutate(() => send(`/goods/${item.id}`, 'DELETE'), 'Freight archived; historical records retained.'))} /> : null}
               </Card>
             ))}
-            {!goods.length && <Empty>No freight records yet.</Empty>}
+            {!(showArchived ? archivedGoods : goods).length && <Empty>{showArchived ? 'No archived freight.' : 'No freight records yet.'}</Empty>}
           </>
         )}
 
         {tab === 'Drivers' && (
           <>
-            <View style={styles.headingRow}><Text style={styles.sectionIntro}>{drivers.length} driver records</Text><Button label="+ Add" onPress={() => openForm('driver', { licenseCategories: 'B' })} /></View>
+            <View style={styles.headingRow}><Text style={styles.sectionIntro}>{showArchived ? archivedDrivers.length : drivers.length} {showArchived ? 'archived' : 'active'} driver records</Text><View style={styles.rowActions}><LinkButton label={showArchived ? 'Show active drivers' : 'View archived drivers'} onPress={() => setShowArchived((value) => !value)} />{!showArchived ? <Button label="+ Add" onPress={() => openForm('driver', { licenseCategories: 'B' })} /> : null}</View></View>
             <SearchInput value={search} onChangeText={setSearch} placeholder="Search drivers" />
-            {drivers.filter((driver) => filtered(`${driver.name} ${driver.email} ${driver.status}`)).map((driver) => (
+            {(showArchived ? archivedDrivers : drivers).filter((driver) => filtered(`${driver.name} ${driver.email} ${driver.status}`)).map((driver) => (
               <Card key={driver.id} title={driver.name} trailing={<Badge value={driver.status} />}>
                 <Text style={styles.bodyText}>{driver.email}</Text><Text style={styles.mutedText}>Licenses: {driver.licenseCategories.join(', ') || '—'}</Text>
                 <View style={styles.rowActions}>
-                  <LinkButton label="Driver details" onPress={() => setSelectedDriverId(driver.id)} />
-                  {!hasScheduledDriverRoute(driver.id) && driver.status !== 'IN_TRANSIT' && driver.status !== 'RETURNING'
+                  {!showArchived ? <LinkButton label="Driver details" onPress={() => setSelectedDriverId(driver.id)} /> : <Text style={styles.mutedText}>Archived; historical route and financial records retained.</Text>}
+                  {!showArchived && !hasScheduledDriverRoute(driver.id) && driver.status !== 'IN_TRANSIT' && driver.status !== 'RETURNING'
                     ? <LinkButton label="Edit" onPress={() => openForm('driver', driver, { editingId: driver.id })} />
                     : null}
-                  {!hasScheduledDriverRoute(driver.id) && (driver.status === 'AVAILABLE' || driver.status === 'ON_LEAVE')
+                  {!showArchived && !hasScheduledDriverRoute(driver.id) && (driver.status === 'AVAILABLE' || driver.status === 'ON_LEAVE')
                     ? <LinkButton label={driver.status === 'ON_LEAVE' ? 'Set available' : 'Set on leave'} onPress={() => void mutate(() => send(`/drivers/${driver.id}/status`, 'PATCH', { status: driver.status === 'ON_LEAVE' ? 'AVAILABLE' : 'ON_LEAVE' }), 'Driver status updated.')} />
                     : null}
-                  {!hasDriverHistory(driver.id) && driver.status !== 'IN_TRANSIT' && driver.status !== 'RETURNING'
-                    ? <LinkButton label="Delete" danger onPress={() => confirm('Delete driver?', `Delete ${driver.name}?`, () => void mutate(() => send(`/drivers/${driver.id}`, 'DELETE'), 'Driver deleted.'))} />
+                  {!showArchived && !hasScheduledDriverRoute(driver.id) && driver.status !== 'IN_TRANSIT' && driver.status !== 'RETURNING'
+                    ? <LinkButton label="Archive" danger onPress={() => confirm('Archive driver?', `Archive ${driver.name}? Route and financial history will be retained.`, () => void mutate(() => send(`/drivers/${driver.id}`, 'DELETE'), 'Driver archived; historical records retained.'))} />
                     : null}
                 </View>
               </Card>
             ))}
-            {!drivers.length && <Empty>No drivers yet.</Empty>}
+            {!(showArchived ? archivedDrivers : drivers).length && <Empty>{showArchived ? 'No archived drivers.' : 'No drivers yet.'}</Empty>}
           </>
         )}
 
         {tab === 'Fleet' && (
           <>
             <View style={styles.actionGrid}>
-              <Button label="+ Vehicle" onPress={() => openForm('vehicle', { vehicleType: 'VAN', transmissionType: 'MANUAL', year: new Date().getFullYear(), maxWeightCapacityKg: 1000, maxVolumeM3: 10, currentMileageKm: 0 })} />
-              <Button label="+ Trailer" onPress={() => openForm('trailer', { trailerType: 'BOX_TRAILER', compatibleVehicleType: 'VAN', year: new Date().getFullYear(), maxWeightCapacityKg: 1000, maxVolumeM3: 10 })} secondary />
+              <LinkButton label={showArchived ? 'Show active vehicles' : 'View archived vehicles'} onPress={() => setShowArchived((value) => !value)} />
+              {!showArchived ? (
+                <>
+                  <Button label="+ Vehicle" onPress={() => openForm('vehicle', { vehicleType: 'VAN', transmissionType: 'MANUAL', year: new Date().getFullYear(), maxWeightCapacityKg: 1000, maxVolumeM3: 10, currentMileageKm: 0 })} />
+                  <Button label="+ Trailer" onPress={() => openForm('trailer', { trailerType: 'BOX_TRAILER', compatibleVehicleType: 'VAN', year: new Date().getFullYear(), maxWeightCapacityKg: 1000, maxVolumeM3: 10 })} secondary />
+                </>
+              ) : null}
             </View>
             <SearchInput value={search} onChangeText={(value) => { setSearch(value); setFleetPage(1) }} placeholder="Search plate, make, model, class, status…" />
             <View style={styles.headingRow}>
-              <Text style={styles.subheading}>Vehicles ({filteredFleetVehicles.length} of {vehicles.length})</Text>
+              <Text style={styles.subheading}>{showArchived ? 'Archived vehicles' : 'Vehicles'} ({filteredFleetVehicles.length} of {showArchived ? archivedVehicles.length : vehicles.length})</Text>
               <View style={styles.fleetSortOptions}>
                 {(['PLATE', 'MILEAGE', 'STATUS'] as const).map((sort) => (
                   <Pressable key={sort} onPress={() => { setFleetSort(sort); setFleetPage(1) }} style={[styles.fleetSortButton, fleetSort === sort && styles.fleetSortButtonSelected]}>
@@ -940,10 +1072,10 @@ function MobileApp() {
                 {driverForVehicle(vehicle.id) ? <LinkButton label={`Driver details · ${driverForVehicle(vehicle.id)?.driverName}`} onPress={() => setSelectedDriverId(driverForVehicle(vehicle.id)?.driverId ?? null)} /> : null}
                 <View style={styles.rowActions}>
                   <LinkButton label="Vehicle details" onPress={() => { setSelectedFleetVehicleId(vehicle.id); setFleetDetailTab('Shipments') }} />
-                  {!hasScheduledVehicleRoute(vehicle.id) && vehicle.status !== 'IN_TRANSIT'
+                  {!showArchived && !hasScheduledVehicleRoute(vehicle.id) && vehicle.status !== 'IN_TRANSIT'
                     ? <LinkButton label="Edit" onPress={() => openForm('vehicle', vehicle, { editingId: vehicle.id })} />
                     : null}
-                  {!hasScheduledVehicleRoute(vehicle.id) && (vehicle.status === 'AVAILABLE' || vehicle.status === 'MAINTENANCE')
+                  {!showArchived && !hasScheduledVehicleRoute(vehicle.id) && (vehicle.status === 'AVAILABLE' || vehicle.status === 'MAINTENANCE')
                     ? <LinkButton label={vehicle.status === 'MAINTENANCE' ? 'Set available' : 'Maintenance'} onPress={() => {
                       if (vehicle.status === 'MAINTENANCE') {
                         confirm('Mark available?', 'Tracked service health will be reset at the current mileage.', () => void mutate(() => send(`/vehicles/${vehicle.id}/status`, 'PATCH', { status: 'AVAILABLE' }), 'Vehicle marked available.'))
@@ -952,8 +1084,8 @@ function MobileApp() {
                       }
                     }} />
                     : null}
-                  {!hasVehicleHistory(vehicle.id) && vehicle.status !== 'IN_TRANSIT'
-                    ? <LinkButton label="Delete" danger onPress={() => confirm('Delete vehicle?', `Delete ${vehicle.licensePlate}?`, () => void mutate(() => send(`/vehicles/${vehicle.id}`, 'DELETE'), 'Vehicle deleted.'))} />
+                  {!showArchived && !hasScheduledVehicleRoute(vehicle.id) && vehicle.status !== 'IN_TRANSIT'
+                    ? <LinkButton label="Archive" danger onPress={() => confirm('Archive vehicle?', `Archive ${vehicle.licensePlate}? Route and financial history will be retained.`, () => void mutate(() => send(`/vehicles/${vehicle.id}`, 'DELETE'), 'Vehicle archived; historical records retained.'))} />
                     : null}
                 </View>
               </Card>
@@ -1231,7 +1363,7 @@ function MobileApp() {
                         {component.healthPercent != null ? <View style={styles.healthTrack}><View style={[styles.healthBar, { width: `${Math.max(0, Math.min(100, component.healthPercent))}%` }]} /></View> : null}
                         <Text style={styles.mutedText}>{component.lastPerformedAt ? `Last service: ${dateString(component.lastPerformedAt)}` : 'No service history recorded'}{component.lastOdometerKm == null ? '' : ` · ${component.lastOdometerKm.toLocaleString()} km`}{component.lastCostEur == null ? '' : ` · ${money(component.lastCostEur)}`}</Text>
                         <Text style={styles.mutedText}>{component.distanceRemainingKm == null ? component.inspectionNote ?? 'No interval data' : `${component.distanceRemainingKm.toLocaleString()} km remaining`}{component.daysRemaining == null ? '' : ` · ${component.daysRemaining} days`}</Text>
-                        <LinkButton label="Record service" disabled={hasScheduledVehicleRoute(selectedFleetVehicle.id)} onPress={() => { setSelectedFleetVehicleId(null); openMaintenance(selectedFleetVehicle, component) }} />
+                        {!selectedFleetVehicle.archived ? <LinkButton label="Record service" disabled={hasScheduledVehicleRoute(selectedFleetVehicle.id)} onPress={() => { setSelectedFleetVehicleId(null); openMaintenance(selectedFleetVehicle, component) }} /> : null}
                       </View>
                     )) : <Empty>No maintenance components recorded.</Empty>}
                   </>
@@ -1266,7 +1398,7 @@ function MobileApp() {
     } else if (action === 'cancel') {
       confirm('Cancel route?', `Cancel route #${route.id}?`, () => void mutate(() => send(`/routes/${route.id}/status`, 'PATCH', { status: 'CANCELLED' }), 'Route cancelled.'))
     } else if (action === 'delete') {
-      confirm('Delete route?', `Delete route #${route.id}?`, () => void mutate(() => send(`/routes/${route.id}`, 'DELETE'), 'Route deleted.'))
+      confirm('Archive route?', `Archive route #${route.id}? It will remain in route history and financial analysis.`, () => void mutate(() => send(`/routes/${route.id}`, 'DELETE'), 'Route archived; history retained.'))
     } else if (goodsId !== undefined) {
       confirm('Confirm delivery?', `Mark freight ${goods.find((item) => item.id === goodsId)?.trackingCode ?? `#${goodsId}`} delivered?`, () => void mutate(() => send(`/routes/${route.id}/goods/${goodsId}/deliver`, 'PATCH'), 'Delivery confirmed.'))
     }
@@ -1439,6 +1571,7 @@ function RouteCard({ route, goods, onAction, onEdit, onDriverPress, expanded }: 
       )))
   return (
     <Card title={`Route #${route.id}`} trailing={<Badge value={route.status} />}>
+      {route.archived ? <Text style={styles.mutedText}>Archived route history · retained for financial analysis</Text> : null}
       <View style={styles.routeCrewRow}>
         <LinkButton label={`Driver · ${route.driverName}`} onPress={() => onDriverPress(route.driverId)} />
         <Text style={styles.bodyText}>{route.vehicleLicensePlate}{route.trailerLicensePlate ? ` · ${route.trailerLicensePlate}` : ''}</Text>
@@ -1455,9 +1588,9 @@ function RouteCard({ route, goods, onAction, onEdit, onDriverPress, expanded }: 
           ))}
         </View>
       ) : null}
-      {route.status === 'PLANNED' ? <View style={styles.rowActions}>{onEdit ? <LinkButton label="Edit route" onPress={() => onEdit(route)} /> : null}<Button label="Start route" onPress={() => onAction(route, 'start')} /><Button label="Cancel" secondary onPress={() => onAction(route, 'cancel')} /><LinkButton label="Delete" danger onPress={() => onAction(route, 'delete')} /></View> : null}
-      {route.status === 'CANCELLED' && (!route.estimatedReturnTime || route.returnedAt)
-        ? <View style={styles.rowActions}><LinkButton label="Delete" danger onPress={() => onAction(route, 'delete')} /></View>
+      {route.status === 'PLANNED' && !route.archived ? <View style={styles.rowActions}>{onEdit ? <LinkButton label="Edit route" onPress={() => onEdit(route)} /> : null}<Button label="Start route" onPress={() => onAction(route, 'start')} /><Button label="Cancel" secondary onPress={() => onAction(route, 'cancel')} /><LinkButton label="Archive" danger onPress={() => onAction(route, 'delete')} /></View> : null}
+      {route.status === 'CANCELLED' && !route.archived
+        ? <View style={styles.rowActions}><LinkButton label="Archive" danger onPress={() => onAction(route, 'delete')} /></View>
         : null}
       {route.status === 'ACTIVE' ? pendingDeliveries.map((stop) => <View key={stop.goodsId} style={styles.deliveryRow}><Text style={styles.bodyText}>{stop.trackingCode} · {stop.city}</Text><Button label="Confirm delivery" onPress={() => onAction(route, 'deliver', stop.goodsId)} /></View>) : null}
     </Card>

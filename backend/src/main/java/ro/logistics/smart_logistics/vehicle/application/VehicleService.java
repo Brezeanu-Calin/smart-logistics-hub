@@ -51,6 +51,13 @@ public class VehicleService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public List<VehicleResponse> findArchived() {
+        return vehicleRepository.findAllByArchivedTrueOrderByLicensePlateAsc().stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
     public VehicleResponse findById(@Positive Long id) {
         Vehicle vehicle = lockVehicle(id);
         maintenanceService.updateAutomaticMaintenanceState(vehicle, OffsetDateTime.now());
@@ -79,6 +86,7 @@ public class VehicleService {
 
     public VehicleResponse update(@Positive Long id, @Valid VehicleRequest request) {
         Vehicle vehicle = lockVehicle(id);
+        ensureNotArchived(vehicle);
         ensureNotScheduled(vehicle);
         validateTransmission(request.vehicleType(), request.transmissionType());
         if (request.currentMileageKm() < vehicle.getCurrentMileageKm()) {
@@ -104,6 +112,7 @@ public class VehicleService {
 
     public VehicleResponse updateDispatcherManagedStatus(@Positive Long id, @NotNull VehicleStatus status) {
         Vehicle vehicle = lockVehicle(id);
+        ensureNotArchived(vehicle);
         if (vehicle.getStatus() == VehicleStatus.IN_TRANSIT) {
             throw new InvalidVehicleStatusException(
                     "A vehicle's status cannot be changed manually while it is IN_TRANSIT on a route."
@@ -127,18 +136,20 @@ public class VehicleService {
             @Positive Long id,
             @Valid VehicleMaintenanceOperationRequest request
     ) {
-        Vehicle vehicle = maintenanceService.recordOperation(id, request);
+        Vehicle vehicle = lockVehicle(id);
+        ensureNotArchived(vehicle);
+        vehicle = maintenanceService.recordOperation(id, request);
         return toResponse(vehicle);
     }
 
     public void delete(@Positive Long id) {
         Vehicle vehicle = lockVehicle(id);
-        vehicleRepository.delete(vehicle);
-        try {
-            vehicleRepository.flush();
-        } catch (DataIntegrityViolationException exception) {
-            throw new VehicleInUseException(id);
+        ensureNotScheduled(vehicle);
+        if (vehicle.isArchived()) {
+            return;
         }
+        vehicle.archive();
+        vehicleRepository.saveAndFlush(vehicle);
     }
 
     private Vehicle saveEntity(Vehicle vehicle, String licensePlate) {
@@ -172,6 +183,12 @@ public class VehicleService {
         return vehicleRepository.findByIdForUpdate(id).orElseThrow(() -> new VehicleNotFoundException(id));
     }
 
+    private static void ensureNotArchived(Vehicle vehicle) {
+        if (vehicle.isArchived()) {
+            throw new InvalidVehicleStatusException("Archived vehicles cannot be changed.");
+        }
+    }
+
     private static String normalizeLicensePlate(String licensePlate) {
         return licensePlate.trim().toUpperCase(Locale.ROOT);
     }
@@ -190,7 +207,8 @@ public class VehicleService {
                 vehicle.getCurrentMileageKm(),
                 vehicle.getTransmissionType(),
                 vehicle.isMaintenanceAutoTriggered(),
-                maintenanceService.componentsFor(vehicle)
+                maintenanceService.componentsFor(vehicle),
+                vehicle.isArchived()
         );
     }
 

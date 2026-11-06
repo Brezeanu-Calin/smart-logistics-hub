@@ -34,7 +34,14 @@ public class DriverService {
 
     @Transactional(readOnly = true)
     public List<DriverResponse> findAll() {
-        return driverRepository.findAllByOrderByNameAsc().stream()
+        return driverRepository.findAllByArchivedFalseOrderByNameAsc().stream()
+                .map(DriverService::toResponse)
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<DriverResponse> findArchived() {
+        return driverRepository.findAllByArchivedTrueOrderByNameAsc().stream()
                 .map(DriverService::toResponse)
                 .toList();
     }
@@ -53,6 +60,7 @@ public class DriverService {
 
     public DriverResponse update(@Positive Long id, @Valid DriverRequest request) {
         Driver driver = lockDriver(id);
+        ensureNotArchived(driver);
         ensureNotScheduled(driver);
         String email = normalizeEmail(request.email());
         ensureEmailAvailable(email, id);
@@ -62,6 +70,7 @@ public class DriverService {
 
     public DriverResponse updateDispatcherManagedStatus(@Positive Long id, @NotNull DriverStatus status) {
         Driver driver = lockDriver(id);
+        ensureNotArchived(driver);
         if (driver.getStatus() == DriverStatus.IN_TRANSIT || driver.getStatus() == DriverStatus.RETURNING) {
             throw new InvalidDriverStatusException(
                     "A driver's status cannot be changed manually while they are IN_TRANSIT or RETURNING."
@@ -78,12 +87,12 @@ public class DriverService {
 
     public void delete(@Positive Long id) {
         Driver driver = lockDriver(id);
-        driverRepository.delete(driver);
-        try {
-            driverRepository.flush();
-        } catch (DataIntegrityViolationException exception) {
-            throw new DriverInUseException(id);
+        ensureNotScheduled(driver);
+        if (driver.isArchived()) {
+            return;
         }
+        driver.archive();
+        driverRepository.saveAndFlush(driver);
     }
 
     private DriverResponse save(Driver driver, String email) {
@@ -100,6 +109,12 @@ public class DriverService {
                 : driverRepository.existsByEmailIgnoreCaseAndIdNot(email, id);
         if (exists) {
             throw new DuplicateDriverEmailException(email);
+        }
+    }
+
+    private static void ensureNotArchived(Driver driver) {
+        if (driver.isArchived()) {
+            throw new InvalidDriverStatusException("Archived drivers cannot be changed.");
         }
     }
 
@@ -132,7 +147,8 @@ public class DriverService {
                 driver.getName(),
                 driver.getEmail(),
                 driver.getLicenseCategories(),
-                driver.getStatus()
+                driver.getStatus(),
+                driver.isArchived()
         );
     }
 }

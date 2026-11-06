@@ -55,9 +55,13 @@ const pushEnabled = ref(false)
 const pushBusy = ref(false)
 const pushFeedback = ref('')
 const drivers = ref<Driver[]>([])
+const archivedDrivers = ref<Driver[]>([])
 const vehicles = ref<Vehicle[]>([])
+const archivedVehicles = ref<Vehicle[]>([])
 const goods = ref<Goods[]>([])
+const archivedGoods = ref<Goods[]>([])
 const routes = ref<Route[]>([])
+const archivedRoutes = ref<Route[]>([])
 const trailers = ref<Trailer[]>([])
 const simulationPositions = reactive<Record<number, RouteSimulationPosition>>({})
 const warehouseCity = ref('Cluj-Napoca, Romania')
@@ -129,6 +133,10 @@ const fleetSort = ref<'CLASS' | 'MILEAGE' | 'STATUS'>('CLASS')
 const driverSearch = ref('')
 const freightSearch = ref('')
 const routeSearch = ref('')
+const showArchivedDrivers = ref(false)
+const showArchivedVehicles = ref(false)
+const showArchivedGoods = ref(false)
+const showArchivedRoutes = ref(false)
 const fleetSearch = ref('')
 const maintenanceSearch = ref('')
 const maintenanceStatusFilter = ref<'ALL' | 'AVAILABLE' | 'MAINTENANCE'>('ALL')
@@ -155,10 +163,10 @@ const selectedMaintenanceVehicle = computed(() =>
   vehicles.value.find((vehicle) => vehicle.id === selectedMaintenanceVehicleId.value) ?? null,
 )
 const selectedFleetVehicle = computed(() =>
-  vehicles.value.find((vehicle) => vehicle.id === selectedFleetVehicleId.value) ?? null,
+  [...vehicles.value, ...archivedVehicles.value].find((vehicle) => vehicle.id === selectedFleetVehicleId.value) ?? null,
 )
 const selectedFleetRoutes = computed(() =>
-  routes.value
+  [...routes.value, ...archivedRoutes.value]
     .filter((route) => route.vehicleId === selectedFleetVehicleId.value)
     .sort((first, second) => second.departureTime.localeCompare(first.departureTime)),
 )
@@ -166,24 +174,26 @@ const selectedVehicleProfitability = computed(() =>
   fleetFinance.value?.vehicles.find((vehicle) => vehicle.vehicleId === selectedFleetVehicleId.value) ?? null,
 )
 const selectedDriver = computed(() =>
-  drivers.value.find((driver) => driver.id === selectedDriverId.value) ?? null,
+  [...drivers.value, ...archivedDrivers.value].find((driver) => driver.id === selectedDriverId.value) ?? null,
 )
 const selectedDriverRoutes = computed(() =>
-  selectedDriver.value ? routes.value.filter((route) => route.driverId === selectedDriver.value?.id) : [],
+  selectedDriver.value
+    ? [...routes.value, ...archivedRoutes.value].filter((route) => route.driverId === selectedDriver.value?.id)
+    : [],
 )
-const filteredDrivers = computed(() => drivers.value.filter((driver) =>
+const filteredDrivers = computed(() => (showArchivedDrivers.value ? archivedDrivers.value : drivers.value).filter((driver) =>
   `${driver.name} ${driver.email} ${driver.licenseCategories.join(' ')} ${driver.status}`
     .toLowerCase().includes(driverSearch.value.trim().toLowerCase()),
 ))
-const filteredGoods = computed(() => goods.value.filter((item) =>
+const filteredGoods = computed(() => (showArchivedGoods.value ? archivedGoods.value : goods.value).filter((item) =>
   `${item.trackingCode} ${item.clientName} ${item.goodsType} ${item.status} ${item.pickupCity} ${item.deliveryCity}`
     .toLowerCase().includes(freightSearch.value.trim().toLowerCase()),
 ))
-const filteredRoutes = computed(() => routes.value.filter((route) =>
+const filteredRoutes = computed(() => (showArchivedRoutes.value ? archivedRoutes.value : routes.value).filter((route) =>
   `${route.id} ${route.driverName} ${route.vehicleLicensePlate} ${route.trailerLicensePlate ?? ''} ${route.status} ${route.stops.map((stop) => `${stop.trackingCode} ${stop.city}`).join(' ')}`
     .toLowerCase().includes(routeSearch.value.trim().toLowerCase()),
 ))
-const filteredVehicles = computed(() => vehicles.value.filter((vehicle) =>
+const filteredVehicles = computed(() => (showArchivedVehicles.value ? archivedVehicles.value : vehicles.value).filter((vehicle) =>
   `${vehicle.licensePlate} ${vehicle.make} ${vehicle.model} ${vehicle.vehicleType} ${vehicle.status} ${assignedDriver(vehicle.id)}`
     .toLowerCase().includes(fleetSearch.value.trim().toLowerCase()),
 ))
@@ -697,21 +707,29 @@ async function toggleRouteMap(route: Route) {
 }
 
 async function loadData() {
-  const [driverResponse, vehicleResponse, goodsResponse, routeResponse, trailerResponse, configResponse] = await Promise.all([
+  const [driverResponse, archivedDriverResponse, vehicleResponse, archivedVehicleResponse, goodsResponse, archivedGoodsResponse, routeResponse, archivedRouteResponse, trailerResponse, configResponse] = await Promise.all([
     api.get<Driver[]>('/drivers'),
+    api.get<Driver[]>('/drivers/archive'),
     api.get<Vehicle[]>('/vehicles'),
+    api.get<Vehicle[]>('/vehicles/archive'),
     api.get<Goods[]>('/goods'),
+    api.get<Goods[]>('/goods/archive'),
     api.get<Route[]>('/routes'),
+    api.get<Route[]>('/routes/archive'),
     api.get<Trailer[]>('/trailers'),
     api.get<WarehouseConfig>('/config'),
   ])
   warehouseCity.value = configResponse.data.warehouseCity
   if (!goodsForm.pickupCity) goodsForm.pickupCity = warehouseCity.value
   drivers.value = driverResponse.data
+  archivedDrivers.value = archivedDriverResponse.data
   vehicles.value = vehicleResponse.data
+  archivedVehicles.value = archivedVehicleResponse.data
   syncMaintenanceEntries()
   goods.value = goodsResponse.data
+  archivedGoods.value = archivedGoodsResponse.data
   routes.value = routeResponse.data
+  archivedRoutes.value = archivedRouteResponse.data
   trailers.value = trailerResponse.data
 }
 
@@ -809,8 +827,8 @@ async function saveDriver() {
 }
 
 async function deleteDriver(driver: Driver) {
-  if (!window.confirm(`Delete driver ${driver.name}?`)) return
-  await mutate(() => api.delete(`/drivers/${driver.id}`), 'Driver deleted.')
+  if (!window.confirm(`Archive driver ${driver.name}? Historical route and financial records will be retained.`)) return
+  await mutate(() => api.delete(`/drivers/${driver.id}`), 'Driver archived; historical records retained.')
 }
 
 async function updateDriverStatus(driver: Driver, status: 'AVAILABLE' | 'ON_LEAVE') {
@@ -931,8 +949,8 @@ async function saveVehicle() {
 }
 
 async function deleteVehicle(vehicle: Vehicle) {
-  if (!window.confirm(`Delete vehicle ${vehicle.licensePlate}?`)) return
-  await mutate(() => api.delete(`/vehicles/${vehicle.id}`), 'Vehicle deleted.')
+  if (!window.confirm(`Archive vehicle ${vehicle.licensePlate}? Route and financial history will be retained.`)) return
+  await mutate(() => api.delete(`/vehicles/${vehicle.id}`), 'Vehicle archived; historical records retained.')
 }
 
 async function updateVehicleStatus(vehicle: Vehicle, status: 'AVAILABLE' | 'MAINTENANCE') {
@@ -1039,8 +1057,8 @@ async function saveGoods() {
 }
 
 async function deleteGoods(item: Goods) {
-  if (!window.confirm(`Delete freight ${item.trackingCode}?`)) return
-  await mutate(() => api.delete(`/goods/${item.id}`), 'Freight deleted.')
+  if (!window.confirm(`Archive freight ${item.trackingCode}? Financial and route history will be retained.`)) return
+  await mutate(() => api.delete(`/goods/${item.id}`), 'Freight archived; historical records retained.')
 }
 
 function defaultDepartureTime() {
@@ -1175,8 +1193,8 @@ async function deliverGoods(route: Route, goodsId: number) {
 }
 
 async function deleteRoute(route: Route) {
-  if (!window.confirm(`Delete route #${route.id}?`)) return
-  await mutate(() => api.delete(`/routes/${route.id}`), 'Route deleted.')
+  if (!window.confirm(`Archive route #${route.id}? It will remain available in route history and financial analysis.`)) return
+  await mutate(() => api.delete(`/routes/${route.id}`), 'Route archived; history retained.')
 }
 
 async function mutate(action: () => Promise<unknown>, message: string) {
@@ -1193,8 +1211,13 @@ async function mutate(action: () => Promise<unknown>, message: string) {
   }
 }
 
+function goodsRecord(goodsId: number) {
+  return goods.value.find((item) => item.id === goodsId)
+    ?? archivedGoods.value.find((item) => item.id === goodsId)
+}
+
 function goodsStatus(goodsId: number) {
-  return goods.value.find((item) => item.id === goodsId)?.status
+  return goodsRecord(goodsId)?.status
 }
 
 function canConfirmDelivery(route: Route, goodsId: number) {
@@ -1206,15 +1229,16 @@ function canConfirmDelivery(route: Route, goodsId: number) {
 }
 
 function hasDriverRoute(driverId: number) {
-  return routes.value.some((route) => route.driverId === driverId)
+  return [...routes.value, ...archivedRoutes.value].some((route) => route.driverId === driverId)
 }
 
 function hasVehicleRoute(vehicleId: number) {
-  return routes.value.some((route) => route.vehicleId === vehicleId)
+  return [...routes.value, ...archivedRoutes.value].some((route) => route.vehicleId === vehicleId)
 }
 
 function isGoodsOnRoute(goodsId: number) {
-  return routes.value.some((route) => route.stops.some((stop) => stop.goodsId === goodsId))
+  return [...routes.value, ...archivedRoutes.value].some((route) =>
+    route.stops.some((stop) => stop.goodsId === goodsId))
 }
 
 function isDriverScheduled(driverId: number) {
@@ -1359,13 +1383,13 @@ routeForm.departureLocal = defaultDepartureTime()
           </div>
           </Teleport>
           <section class="panel">
-            <div class="panel-heading"><div><h2>All routes</h2><p>{{ filteredRoutes.length }} of {{ routes.length }} route{{ routes.length === 1 ? '' : 's' }} in the system</p></div><label class="list-search">Search routes<input v-model.trim="routeSearch" type="search" placeholder="Route, driver, vehicle, freight, city…"></label></div>
+            <div class="panel-heading"><div><h2>{{ showArchivedRoutes ? 'Route history' : 'Operational routes' }}</h2><p>{{ filteredRoutes.length }} of {{ showArchivedRoutes ? archivedRoutes.length : routes.length }} route{{ routes.length === 1 ? '' : 's' }} · completed routes are archived automatically</p></div><div class="heading-actions"><button class="text-button" @click="showArchivedRoutes = !showArchivedRoutes">{{ showArchivedRoutes ? 'Show operational routes' : 'View archived history' }}</button><label class="list-search">Search routes<input v-model.trim="routeSearch" type="search" placeholder="Route, driver, vehicle, freight, city…"></label></div></div>
             <PaginationControl v-if="filteredRoutes.length > pageSize" v-model:current-page="routePage" v-model:page-size="pageSize" :page-count="pageCount(filteredRoutes.length)" :total="filteredRoutes.length" />
             <div v-if="!routes.length" class="empty-state"><span>↗</span><strong>No routes planned</strong><p>Assign an available driver, vehicle, and freight to create your first route.</p></div>
             <div v-else-if="!filteredRoutes.length" class="empty-state"><strong>No matching routes</strong><p>Try a different route, driver, vehicle, freight, or city search.</p></div>
             <div v-else class="route-list">
               <article v-for="route in paginatedRoutes" :key="route.id" class="route-card">
-                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></div><div class="route-actions"><button v-if="route.status !== 'ACTIVE'" class="text-button" :disabled="loadingRouteMaps.has(route.id)" @click="toggleRouteMap(route)">{{ loadingRouteMaps.has(route.id) ? 'Calculating route…' : expandedRouteMaps.has(route.id) ? 'Hide map' : 'Show map' }}</button><button v-if="route.status === 'PLANNED'" class="text-button" :disabled="busy" @click="editPlannedRoute(route)">Edit route</button><button v-if="route.status === 'PLANNED'" class="small-button" :disabled="busy" @click="setRouteStatus(route, 'ACTIVE')">Start route</button><button v-if="route.status === 'PLANNED' || (route.status === 'CANCELLED' && (!route.estimatedReturnTime || route.returnedAt))" class="icon-button danger" :disabled="busy" aria-label="Delete route" @click="deleteRoute(route)">⌫</button></div></div>
+                <div class="route-card-head"><div><span class="route-number">ROUTE #{{ route.id }}</span><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span><span v-if="route.archived" class="status-pill">ARCHIVED</span></div><div class="route-actions"><button v-if="route.status !== 'ACTIVE'" class="text-button" :disabled="loadingRouteMaps.has(route.id)" @click="toggleRouteMap(route)">{{ loadingRouteMaps.has(route.id) ? 'Calculating route…' : expandedRouteMaps.has(route.id) ? 'Hide map' : 'Show map' }}</button><button v-if="route.status === 'PLANNED' && !route.archived" class="text-button" :disabled="busy" @click="editPlannedRoute(route)">Edit route</button><button v-if="route.status === 'PLANNED' && !route.archived" class="small-button" :disabled="busy" @click="setRouteStatus(route, 'ACTIVE')">Start route</button><button v-if="route.status !== 'ACTIVE' && !route.archived" class="text-button danger-text" :disabled="busy" @click="deleteRoute(route)">Archive</button></div></div>
                 <div class="route-summary"><div><small>DRIVER</small><button class="text-button" @click="openDriverDetails(route.driverId)">{{ route.driverName }}</button></div><div><small>VEHICLE</small><button class="text-button" @click="openDriverDetails(route.driverId)">{{ route.vehicleLicensePlate }}<template v-if="route.trailerLicensePlate"> + {{ route.trailerLicensePlate }}</template></button></div><div><small>DEPARTURE</small><strong>{{ displayDate(route.departureTime) }}</strong></div><div><small>EST. AT DEPOT</small><strong>{{ displayDate(route.estimatedReturnTime) }}</strong></div></div>
                 <div class="route-metrics"><span>↔ {{ (route.distanceMeters / 1000).toFixed(1) }} km total distance</span><span>◷ {{ displayDuration(route.drivingDurationSeconds) }} driving</span><span v-if="route.returnedAt">✓ Returned {{ displayDate(route.returnedAt) }}</span></div>
                 <RouteMap
@@ -1388,7 +1412,7 @@ routeForm.departureLocal = defaultDepartureTime()
 
         <template v-else-if="section === 'freight'">
           <div class="page-heading"><div><p class="eyebrow">FREIGHT JOBS / LOADS</p><h1>Freight Jobs &amp; Loads</h1><p class="subtitle">Warehouse: {{ warehouseCity }} · Manage live freight records and route assignments.</p></div></div>
-          <section class="panel form-panel">
+          <section v-if="!showArchivedGoods" class="panel form-panel">
             <div class="panel-heading"><div><h2>{{ editingGoodsId === null ? 'Add freight' : 'Edit freight' }}</h2><p>Tracking codes are generated automatically.</p></div><button v-if="editingGoodsId !== null" class="text-button" @click="resetGoodsForm">Discard changes</button></div>
             <form class="form-grid two-column" @submit.prevent="saveGoods">
               <label>Client name<input v-model.trim="goodsForm.clientName" maxlength="150" required></label>
@@ -1402,25 +1426,25 @@ routeForm.departureLocal = defaultDepartureTime()
               <div class="form-actions"><button class="primary-button" :disabled="busy">{{ editingGoodsId === null ? 'Add freight' : 'Save changes' }}</button></div>
             </form>
           </section>
-          <section class="panel"><div class="panel-heading"><div><h2>Freight register</h2><p>{{ filteredGoods.length }} of {{ goods.length }} items including delivered freight kept for route history</p></div><label class="list-search">Search freight<input v-model.trim="freightSearch" type="search" placeholder="Tracking, client, category, city…"></label></div>
+          <section class="panel"><div class="panel-heading"><div><h2>{{ showArchivedGoods ? 'Archived freight history' : 'Freight register' }}</h2><p>{{ filteredGoods.length }} of {{ showArchivedGoods ? archivedGoods.length : goods.length }} freight records · archived shipments remain available for finance analysis</p></div><div class="heading-actions"><button class="text-button" @click="showArchivedGoods = !showArchivedGoods">{{ showArchivedGoods ? 'Show active freight' : 'View archived freight' }}</button><label class="list-search">Search freight<input v-model.trim="freightSearch" type="search" placeholder="Tracking, client, category, city…"></label></div></div>
             <PaginationControl v-if="filteredGoods.length > pageSize" v-model:current-page="freightPage" v-model:page-size="pageSize" :page-count="pageCount(filteredGoods.length)" :total="filteredGoods.length" />
             <div v-if="!goods.length" class="empty-state"><span>▣</span><strong>No freight registered</strong><p>Add freight details here before creating a route.</p></div>
             <div v-else-if="!filteredGoods.length" class="empty-state"><strong>No matching freight</strong><p>Try a different tracking code, client, category, or city.</p></div>
-            <div v-else class="table-wrap"><table><thead><tr><th>TRACKING</th><th>CLIENT / TYPE</th><th>ROUTE</th><th>WEIGHT / VOLUME</th><th>REVENUE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="item in paginatedGoods" :key="item.id"><td><strong>{{ item.trackingCode }}</strong><small>{{ item.pickupCity }} → {{ item.deliveryCity }}</small></td><td>{{ item.clientName }}<small>{{ formatStatus(item.goodsType) }}</small></td><td>{{ item.status === 'ARCHIVED' ? 'Completed route history' : item.status === 'UNASSIGNED' ? 'Not assigned' : 'In a route' }}</td><td>{{ item.weightKg }} kg<small>{{ item.volumeM3 }} m³</small></td><td>€ {{ item.revenueEur?.toLocaleString() ?? 'Not set' }}</td><td><span class="status-pill" :class="item.status.toLowerCase()">{{ formatStatus(item.status) }}</span></td><td><div class="row-actions"><button v-if="item.status === 'UNASSIGNED' && !isGoodsOnRoute(item.id)" class="text-button" @click="editGoods(item)">Edit</button><button v-if="item.status === 'UNASSIGNED' && !isGoodsOnRoute(item.id)" class="text-button danger-text" @click="deleteGoods(item)">Delete</button></div></td></tr></tbody></table></div>
+            <div v-else class="table-wrap"><table><thead><tr><th>TRACKING</th><th>CLIENT / TYPE</th><th>ROUTE</th><th>WEIGHT / VOLUME</th><th>REVENUE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="item in paginatedGoods" :key="item.id"><td><strong>{{ item.trackingCode }}</strong><small>{{ item.pickupCity }} → {{ item.deliveryCity }}</small></td><td>{{ item.clientName }}<small>{{ formatStatus(item.goodsType) }}</small></td><td>{{ item.status === 'ARCHIVED' ? 'Completed route history' : item.status === 'UNASSIGNED' ? 'Not assigned' : 'In a route' }}</td><td>{{ item.weightKg }} kg<small>{{ item.volumeM3 }} m³</small></td><td>€ {{ item.revenueEur?.toLocaleString() ?? 'Not set' }}</td><td><span class="status-pill" :class="item.status.toLowerCase()">{{ formatStatus(item.status) }}</span><span v-if="item.archived" class="status-pill">ARCHIVED</span></td><td><div class="row-actions"><button v-if="!showArchivedGoods && item.status === 'UNASSIGNED' && !isGoodsOnRoute(item.id)" class="text-button" @click="editGoods(item)">Edit</button><button v-if="!showArchivedGoods && !isGoodsOnRoute(item.id)" class="text-button danger-text" @click="deleteGoods(item)">Archive</button></div></td></tr></tbody></table></div>
             <PaginationControl v-if="filteredGoods.length > pageSize" v-model:current-page="freightPage" v-model:page-size="pageSize" :page-count="pageCount(filteredGoods.length)" :total="filteredGoods.length" />
           </section>
         </template>
 
         <template v-else-if="section === 'drivers'">
           <div class="page-heading"><div><p class="eyebrow">PEOPLE</p><h1>Drivers</h1><p class="subtitle">Manage driver details, license categories, and availability.</p></div></div>
-          <section class="panel form-panel"><div class="panel-heading"><div><h2>{{ editingDriverId === null ? 'Add a driver' : 'Edit driver' }}</h2><p>Drivers on a route or returning cannot be edited or manually reassigned.</p></div><button v-if="editingDriverId !== null" class="text-button" @click="resetDriverForm">Discard changes</button></div>
+          <section v-if="!showArchivedDrivers" class="panel form-panel"><div class="panel-heading"><div><h2>{{ editingDriverId === null ? 'Add a driver' : 'Edit driver' }}</h2><p>Drivers on a route or returning cannot be edited or manually reassigned.</p></div><button v-if="editingDriverId !== null" class="text-button" @click="resetDriverForm">Discard changes</button></div>
             <form class="form-grid two-column" @submit.prevent="saveDriver"><label>Full name<input v-model.trim="driverForm.name" maxlength="100" required></label><label>Email<input v-model.trim="driverForm.email" type="email" maxlength="254" required></label><fieldset class="license-picker"><legend>License categories</legend><label v-for="license in ['B', 'BE', 'C', 'CE']" :key="license" class="check-inline"><input v-model="driverForm.licenseCategories" type="checkbox" :value="license">{{ license }}</label></fieldset><div class="form-actions"><button class="primary-button" :disabled="busy || !driverForm.licenseCategories.length">{{ editingDriverId === null ? 'Add driver' : 'Save changes' }}</button></div></form>
           </section>
-          <section class="panel"><div class="panel-heading"><div><h2>Driver roster</h2><p>{{ filteredDrivers.length }} of {{ drivers.length }} drivers registered</p></div><label class="list-search">Search drivers<input v-model.trim="driverSearch" type="search" placeholder="Name, email, license, status…"></label></div>
+          <section class="panel"><div class="panel-heading"><div><h2>{{ showArchivedDrivers ? 'Archived driver history' : 'Driver roster' }}</h2><p>{{ filteredDrivers.length }} of {{ showArchivedDrivers ? archivedDrivers.length : drivers.length }} driver records · historical route and finance attribution retained</p></div><div class="heading-actions"><button class="text-button" @click="showArchivedDrivers = !showArchivedDrivers">{{ showArchivedDrivers ? 'Show active drivers' : 'View archived drivers' }}</button><label class="list-search">Search drivers<input v-model.trim="driverSearch" type="search" placeholder="Name, email, license, status…"></label></div></div>
             <PaginationControl v-if="filteredDrivers.length > pageSize" v-model:current-page="driverPage" v-model:page-size="pageSize" :page-count="pageCount(filteredDrivers.length)" :total="filteredDrivers.length" />
             <div v-if="!drivers.length" class="empty-state"><strong>No drivers registered</strong><p>Add drivers to make them available for route planning.</p></div>
             <div v-else-if="!filteredDrivers.length" class="empty-state"><strong>No matching drivers</strong><p>Try a different name, email, license, or status.</p></div>
-            <div v-else class="table-wrap"><table><thead><tr><th>DRIVER</th><th>LICENSES</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="driver in paginatedDrivers" :key="driver.id"><td><button class="text-button manifest-select" @click="openDriverDetails(driver.id)">{{ driver.name }}</button><small>{{ driver.email }}</small></td><td><span v-for="license in driver.licenseCategories" :key="license" class="license-chip">{{ license }}</span></td><td><span class="status-pill" :class="driver.status.toLowerCase()">{{ formatStatus(driver.status) }}</span></td><td><div class="row-actions"><button class="text-button" @click="openDriverDetails(driver.id)">Details</button><button v-if="!isDriverScheduled(driver.id) && driver.status !== 'IN_TRANSIT' && driver.status !== 'RETURNING'" class="text-button" @click="editDriver(driver)">Edit</button><select v-if="!isDriverScheduled(driver.id) && (driver.status === 'AVAILABLE' || driver.status === 'ON_LEAVE')" class="compact-select" :value="driver.status" aria-label="Driver availability" @change="updateDriverStatus(driver, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'ON_LEAVE')"><option value="AVAILABLE">Available</option><option value="ON_LEAVE">On leave</option></select><button class="text-button danger-text" :disabled="driver.status === 'IN_TRANSIT' || driver.status === 'RETURNING' || hasDriverRoute(driver.id)" :title="hasDriverRoute(driver.id) ? 'Route history references this driver' : ''" @click="deleteDriver(driver)">Delete</button></div></td></tr></tbody></table></div>
+            <div v-else class="table-wrap"><table><thead><tr><th>DRIVER</th><th>LICENSES</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="driver in paginatedDrivers" :key="driver.id"><td><button class="text-button manifest-select" @click="openDriverDetails(driver.id)">{{ driver.name }}</button><small>{{ driver.email }}</small></td><td><span v-for="license in driver.licenseCategories" :key="license" class="license-chip">{{ license }}</span></td><td><span class="status-pill" :class="driver.status.toLowerCase()">{{ formatStatus(driver.status) }}</span><span v-if="driver.archived" class="status-pill">ARCHIVED</span></td><td><div class="row-actions"><button class="text-button" @click="openDriverDetails(driver.id)">Details</button><template v-if="!showArchivedDrivers"><button v-if="!isDriverScheduled(driver.id) && driver.status !== 'IN_TRANSIT' && driver.status !== 'RETURNING'" class="text-button" @click="editDriver(driver)">Edit</button><select v-if="!isDriverScheduled(driver.id) && (driver.status === 'AVAILABLE' || driver.status === 'ON_LEAVE')" class="compact-select" :value="driver.status" aria-label="Driver availability" @change="updateDriverStatus(driver, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'ON_LEAVE')"><option value="AVAILABLE">Available</option><option value="ON_LEAVE">On leave</option></select><button class="text-button danger-text" :disabled="driver.status === 'IN_TRANSIT' || driver.status === 'RETURNING' || isDriverScheduled(driver.id)" :title="isDriverScheduled(driver.id) ? 'Driver is assigned to a planned or active route' : ''" @click="deleteDriver(driver)">Archive</button></template></div></td></tr></tbody></table></div>
             <PaginationControl v-if="filteredDrivers.length > pageSize" v-model:current-page="driverPage" v-model:page-size="pageSize" :page-count="pageCount(filteredDrivers.length)" :total="filteredDrivers.length" />
           </section>
         </template>
@@ -1433,15 +1457,15 @@ routeForm.departureLocal = defaultDepartureTime()
             <article class="stat-card"><div class="stat-top"><span>Trailers</span><span class="stat-icon orange">▱</span></div><strong>{{ trailers.length }}</strong><small>Registered equipment</small></article>
             <article class="stat-card"><div class="stat-top"><span>In maintenance</span><span class="stat-icon green">⚒</span></div><strong>{{ maintenanceVehicles.length }}</strong><small>Vehicles held for service</small></article>
           </div>
-          <section class="panel form-panel"><div class="panel-heading"><div><h2>{{ editingVehicleId === null ? 'Add a vehicle' : 'Edit vehicle' }}</h2><p>Fleet capacity is checked automatically when planning routes.</p></div><button v-if="editingVehicleId !== null" class="text-button" @click="resetVehicleForm">Discard changes</button></div>
+          <section v-if="!showArchivedVehicles" class="panel form-panel"><div class="panel-heading"><div><h2>{{ editingVehicleId === null ? 'Add a vehicle' : 'Edit vehicle' }}</h2><p>Fleet capacity is checked automatically when planning routes.</p></div><button v-if="editingVehicleId !== null" class="text-button" @click="resetVehicleForm">Discard changes</button></div>
             <form class="form-grid three-column" @submit.prevent="saveVehicle"><label>License plate<input v-model.trim="vehicleForm.licensePlate" maxlength="20" required></label>            <label>Vehicle type<select v-model="vehicleForm.vehicleType" @change="updateVehicleTypeDefaults"><option value="VAN">Van</option><option value="RIGID_TRUCK">Rigid truck</option><option value="ARTICULATED_TRUCK">Articulated truck</option></select></label><label>Transmission<select v-model="vehicleForm.transmissionType"><option v-if="vehicleForm.vehicleType === 'VAN'" value="MANUAL">Manual</option><option v-if="vehicleForm.vehicleType === 'VAN'" value="AUTOMATIC">Automatic</option><option v-else value="AMT">Automated manual (AMT)</option></select></label><label>Make<input v-model.trim="vehicleForm.make" maxlength="100" required></label><label>Model<input v-model.trim="vehicleForm.model" maxlength="100" required></label><label>Year<input v-model.number="vehicleForm.year" type="number" min="1900" max="2100" required></label><label>Mileage (km)<input v-model.number="vehicleForm.currentMileageKm" type="number" min="0" step="1" required></label><label>Max weight (kg)<input v-model.number="vehicleForm.maxWeightCapacityKg" type="number" min="0.01" step="0.01" required></label><label>Max volume (m³)<input v-model.number="vehicleForm.maxVolumeM3" type="number" min="0.01" step="0.01" required></label><div class="form-actions"><button class="primary-button" :disabled="busy">{{ editingVehicleId === null ? 'Add vehicle' : 'Save changes' }}</button></div></form>
           </section>
           <section class="panel">
-            <div class="panel-heading"><div><h2>Vehicle manifest</h2><p>{{ filteredVehicles.length }} of {{ vehicles.length }} registered units · driver/status from route and fleet records</p></div><div class="manifest-controls"><label class="list-search">Search fleet<input v-model.trim="fleetSearch" type="search" placeholder="Plate, make, model, driver…"></label><div class="market-controls"><label class="sort-label" for="fleet-sort">SORT BY</label><select id="fleet-sort" v-model="fleetSort" aria-label="Sort vehicle manifest"><option value="CLASS">Vehicle class</option><option value="MILEAGE">Mileage</option><option value="STATUS">Status</option></select></div></div></div>
+            <div class="panel-heading"><div><h2>{{ showArchivedVehicles ? 'Archived vehicle history' : 'Vehicle manifest' }}</h2><p>{{ filteredVehicles.length }} of {{ showArchivedVehicles ? archivedVehicles.length : vehicles.length }} vehicle records · route and finance history retained</p></div><div class="manifest-controls"><button class="text-button" @click="showArchivedVehicles = !showArchivedVehicles">{{ showArchivedVehicles ? 'Show active fleet' : 'View archived vehicles' }}</button><label class="list-search">Search fleet<input v-model.trim="fleetSearch" type="search" placeholder="Plate, make, model, driver…"></label><div class="market-controls"><label class="sort-label" for="fleet-sort">SORT BY</label><select id="fleet-sort" v-model="fleetSort" aria-label="Sort vehicle manifest"><option value="CLASS">Vehicle class</option><option value="MILEAGE">Mileage</option><option value="STATUS">Status</option></select></div></div></div>
             <PaginationControl v-if="sortedVehicles.length > pageSize" v-model:current-page="vehiclePage" v-model:page-size="pageSize" :page-count="pageCount(sortedVehicles.length)" :total="sortedVehicles.length" />
             <div v-if="!vehicles.length" class="empty-state"><strong>No vehicles registered</strong><p>Add a vehicle to start planning routes.</p></div>
             <div v-else-if="!sortedVehicles.length" class="empty-state"><strong>No matching vehicles</strong><p>Try a different plate, make, model, driver, or vehicle type.</p></div>
-            <div v-else class="table-wrap"><table><thead><tr><th>VEHICLE</th><th>CLASS / GEARBOX</th><th>ASSIGNED DRIVER</th><th>CAPACITY</th><th>MILEAGE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="vehicle in paginatedVehicles" :key="vehicle.id"><td><button class="text-button manifest-select" @click="openVehicleDetails(vehicle)">{{ vehicle.licensePlate }}</button><small>{{ vehicle.make }} {{ vehicle.model }} · {{ vehicle.year }}</small></td><td>{{ formatStatus(vehicle.vehicleType) }}<small>{{ formatStatus(vehicle.transmissionType) }}</small></td><td><button v-if="assignedDriverRoute(vehicle.id)" class="text-button" @click="openAssignedDriver(vehicle.id)">{{ assignedDriver(vehicle.id) }}</button><span v-else>—</span></td><td>{{ vehicle.maxWeightCapacityKg }} kg<small>{{ vehicle.maxVolumeM3 }} m³</small></td><td>{{ vehicle.currentMileageKm.toLocaleString() }} km</td><td><span class="status-pill" :class="vehicle.status.toLowerCase()">{{ vehicleStatusLabel(vehicle) }}</span><span v-if="vehicle.maintenanceAutoTriggered && vehicle.status === 'IN_TRANSIT'" class="status-pill warning">MAINTENANCE DUE AFTER ROUTE</span></td><td><div class="row-actions"><button v-if="!isVehicleScheduled(vehicle.id) && vehicle.status !== 'IN_TRANSIT'" class="text-button" @click="editVehicle(vehicle)">Edit</button><select v-if="!isVehicleScheduled(vehicle.id) && (vehicle.status === 'AVAILABLE' || vehicle.status === 'MAINTENANCE')" class="compact-select" :value="vehicle.status" aria-label="Vehicle status" @change="updateVehicleStatus(vehicle, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'MAINTENANCE')"><option value="AVAILABLE">Available</option><option value="MAINTENANCE">In maintenance</option></select><button class="text-button danger-text" :disabled="vehicle.status === 'IN_TRANSIT' || hasVehicleRoute(vehicle.id)" :title="hasVehicleRoute(vehicle.id) ? 'Route history references this vehicle' : ''" @click="deleteVehicle(vehicle)">Delete</button></div></td></tr></tbody></table></div>
+            <div v-else class="table-wrap"><table><thead><tr><th>VEHICLE</th><th>CLASS / GEARBOX</th><th>ASSIGNED DRIVER</th><th>CAPACITY</th><th>MILEAGE</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody><tr v-for="vehicle in paginatedVehicles" :key="vehicle.id"><td><button class="text-button manifest-select" @click="openVehicleDetails(vehicle)">{{ vehicle.licensePlate }}</button><small>{{ vehicle.make }} {{ vehicle.model }} · {{ vehicle.year }}</small></td><td>{{ formatStatus(vehicle.vehicleType) }}<small>{{ formatStatus(vehicle.transmissionType) }}</small></td><td><button v-if="!vehicle.archived && assignedDriverRoute(vehicle.id)" class="text-button" @click="openAssignedDriver(vehicle.id)">{{ assignedDriver(vehicle.id) }}</button><span v-else>—</span></td><td>{{ vehicle.maxWeightCapacityKg }} kg<small>{{ vehicle.maxVolumeM3 }} m³</small></td><td>{{ vehicle.currentMileageKm.toLocaleString() }} km</td><td><span class="status-pill" :class="vehicle.status.toLowerCase()">{{ vehicleStatusLabel(vehicle) }}</span><span v-if="vehicle.archived" class="status-pill">ARCHIVED</span><span v-if="vehicle.maintenanceAutoTriggered && vehicle.status === 'IN_TRANSIT'" class="status-pill warning">MAINTENANCE DUE AFTER ROUTE</span></td><td><div class="row-actions"><template v-if="!showArchivedVehicles"><button v-if="!isVehicleScheduled(vehicle.id) && vehicle.status !== 'IN_TRANSIT'" class="text-button" @click="editVehicle(vehicle)">Edit</button><select v-if="!isVehicleScheduled(vehicle.id) && (vehicle.status === 'AVAILABLE' || vehicle.status === 'MAINTENANCE')" class="compact-select" :value="vehicle.status" aria-label="Vehicle status" @change="updateVehicleStatus(vehicle, ($event.target as HTMLSelectElement).value as 'AVAILABLE' | 'MAINTENANCE')"><option value="AVAILABLE">Available</option><option value="MAINTENANCE">In maintenance</option></select><button class="text-button danger-text" :disabled="vehicle.status === 'IN_TRANSIT' || isVehicleScheduled(vehicle.id)" :title="isVehicleScheduled(vehicle.id) ? 'Vehicle is assigned to a planned or active route' : ''" @click="deleteVehicle(vehicle)">Archive</button></template></div></td></tr></tbody></table></div>
             <PaginationControl v-if="sortedVehicles.length > pageSize" v-model:current-page="vehiclePage" v-model:page-size="pageSize" :page-count="pageCount(sortedVehicles.length)" :total="sortedVehicles.length" />
           </section>
           <Teleport to="body">
@@ -1462,7 +1486,7 @@ routeForm.departureLocal = defaultDepartureTime()
                     <div class="fleet-history-heading"><strong>ROUTE #{{ route.id }}</strong><span class="status-pill" :class="route.status.toLowerCase()">{{ formatStatus(route.status) }}</span></div>
                     <p>{{ displayDate(route.departureTime) }} · {{ (route.distanceMeters / 1000).toFixed(1) }} km · {{ route.driverName }}</p>
                     <div v-for="stop in route.stops.filter((item) => item.type === 'DELIVERY')" :key="`${route.id}-${stop.goodsId}`" class="fleet-shipment-row">
-                      <span>{{ stop.trackingCode }}</span><strong>{{ goods.find((item) => item.id === stop.goodsId)?.clientName ?? 'Shipment' }}</strong><small>Delivered to {{ stop.city }} · {{ formatStatus(goods.find((item) => item.id === stop.goodsId)?.status ?? route.status) }}</small>
+                      <span>{{ stop.trackingCode }}</span><strong>{{ goodsRecord(stop.goodsId)?.clientName ?? 'Shipment' }}</strong><small>Delivered to {{ stop.city }} · {{ formatStatus(goodsRecord(stop.goodsId)?.status ?? route.status) }}</small>
                     </div>
                     <p v-if="!route.stops.some((stop) => stop.type === 'DELIVERY')" class="fleet-detail-muted">No shipment stops recorded for this route.</p>
                   </div>
@@ -1474,7 +1498,7 @@ routeForm.departureLocal = defaultDepartureTime()
                     <p>{{ component.lastPerformedAt ? `Last service ${displayDate(component.lastPerformedAt)}` : 'No service history recorded' }}<template v-if="component.lastOdometerKm !== null"> · {{ component.lastOdometerKm.toLocaleString() }} km</template><template v-if="component.lastCostEur !== null"> · €{{ component.lastCostEur.toFixed(2) }}</template></p>
                     <small>{{ component.inspectionNote ?? remainingInterval(component) }}</small>
                   </div>
-                  <button class="secondary-button" @click="selectedMaintenanceVehicleId = selectedFleetVehicleId; selectedFleetVehicleId = null; section = 'maintenance'">Open maintenance manager</button>
+                  <button v-if="!selectedFleetVehicle.archived" class="secondary-button" @click="selectedMaintenanceVehicleId = selectedFleetVehicleId; selectedFleetVehicleId = null; section = 'maintenance'">Open maintenance manager</button>
                 </div>
                 <div v-else class="fleet-detail-body">
                   <p class="fleet-finance-period">CURRENT MONTH · {{ fleetFinance?.from ?? '' }} — {{ fleetFinance?.to ?? '' }}</p>
