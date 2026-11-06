@@ -1,8 +1,8 @@
-# Smart Logistics Hub
+# Haulmaster
 
 ## About the app
 
-Smart Logistics Hub is a road-freight dispatch and fleet-operations application. It brings freight records, drivers, vehicles, trailers, route planning, delivery progress, maintenance, and basic financial reporting together in one place. Dispatchers use the web app to organize work and monitor operations; drivers and field staff can use the mobile-friendly web app or the separate native Android/iOS app to access operational information and submit updates. All clients share the same backend and SQL Server database.
+Haulmaster is a road-freight dispatch and fleet-operations application. It brings freight records, drivers, vehicles, trailers, route planning, delivery progress, maintenance, and basic financial reporting together in one place. Dispatchers use the web app to organize work and monitor operations; drivers and field staff can use the mobile-friendly web app or the separate native Android/iOS app to access operational information and submit updates. All clients share the same backend and SQL Server database.
 
 ### How it works
 
@@ -30,7 +30,7 @@ The app manages the dispatch process from freight intake through delivery and re
 
 The app is suited to small and mid-sized road-freight carriers, regional delivery and distribution operators, courier fleets, and logistics teams that coordinate drivers, vehicles, trailers, and multi-stop shipments from a depot. It can also serve as a prototype or internal operations dashboard for teams evaluating a shared dispatch workflow. It is most useful where city-to-city road estimates, manual delivery confirmation, and basic revenue-versus-maintenance reporting are sufficient.
 
-Smart Logistics Hub is not a full enterprise transportation-management system: the current implementation does not provide live GPS/telematics, live traffic ETAs, automated proof of delivery, or complete profit accounting. Routing depends on external or self-hosted geocoding and road-routing services, and estimates are city-level approximations. The demo sign-in is not real authentication, and backend APIs are unprotected; do not expose this version as a secured production service or use real/private data without adding appropriate security and reviewing external AI/data-sharing settings.
+Haulmaster is not a full enterprise transportation-management system: the current implementation does not provide live GPS/telematics, live traffic ETAs, automated proof of delivery, or complete profit accounting. Routing depends on external or self-hosted geocoding and road-routing services, and estimates are city-level approximations. The demo sign-in is not real authentication, and backend APIs are unprotected; do not expose this version as a secured production service or use real/private data without adding appropriate security and reviewing external AI/data-sharing settings.
 
 ## Backend database
 
