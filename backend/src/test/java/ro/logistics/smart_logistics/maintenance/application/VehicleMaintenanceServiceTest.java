@@ -118,6 +118,34 @@ class VehicleMaintenanceServiceTest {
     }
 
     @Test
+    void initializingHealthRecordsEveryTrackedComponentAtCurrentOdometer() throws Exception {
+        Vehicle vehicle = vehicle();
+        OffsetDateTime beforeInitialization = OffsetDateTime.now().minusSeconds(1);
+        List<VehicleMaintenanceOperation> initializedOperations = new ArrayList<>();
+        when(operationRepository.saveAll(any())).thenAnswer(invocation -> {
+            Iterable<VehicleMaintenanceOperation> operations = invocation.getArgument(0);
+            StreamSupport.stream(operations.spliterator(), false).forEach(initializedOperations::add);
+            return initializedOperations;
+        });
+        when(operationRepository.findAllByVehicle_IdOrderByPerformedAtDescIdDesc(1L))
+                .thenAnswer(invocation -> initializedOperations);
+
+        maintenanceService.initializeHealth(vehicle);
+
+        int healthTrackedComponents = (int) VehicleMaintenanceCatalog.forVehicle(vehicle).stream()
+                .filter(VehicleMaintenanceCatalog.Definition::hasHealthInterval)
+                .count();
+        assertEquals(healthTrackedComponents, initializedOperations.size());
+        assertTrue(initializedOperations.stream().allMatch(operation ->
+                operation.getOdometerKm().equals(vehicle.getCurrentMileageKm())
+                        && operation.getCostEur() == null
+                        && operation.getPerformedAt().isAfter(beforeInitialization)));
+        assertTrue(maintenanceService.componentsFor(vehicle).stream()
+                .filter(component -> component.healthPercent() != null)
+                .allMatch(component -> component.healthPercent() == 100));
+    }
+
+    @Test
     void manualAndAutomaticVansUseOnlyTheirMatchingTransmissionSchedule() throws Exception {
         Vehicle manualVan = vehicle();
         Vehicle automaticVan = new Vehicle(

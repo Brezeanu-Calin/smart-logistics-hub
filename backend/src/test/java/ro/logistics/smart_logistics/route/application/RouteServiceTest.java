@@ -51,6 +51,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -329,6 +330,54 @@ class RouteServiceTest {
         assertEquals(DriverStatus.IN_TRANSIT, driver.getStatus());
         assertEquals(VehicleStatus.IN_TRANSIT, vehicle.getStatus());
         assertEquals(GoodsStatus.IN_TRANSIT, goods.getStatus());
+    }
+
+    @Test
+    void activatingRouteLocksTrailerBeforeGoods() throws Exception {
+        Driver driver = new Driver("Alex", "alex@example.com", Set.of(LicenseCategory.B));
+        setId(driver, 1L);
+        Vehicle vehicle = new Vehicle("VAN-1", VehicleType.VAN, "Make", "Model", 2022, 5000.0, 20.0, 1000);
+        setId(vehicle, 2L);
+        Trailer trailer = new Trailer(
+                "TRL-1", TrailerType.VAN_TRAILER, VehicleType.VAN, "Make", "Model", 2022, 5000.0, 20.0
+        );
+        setId(trailer, 4L);
+        Goods goods = goods(3L, 4000.0, 10.0);
+        goods.assignToRoute();
+        Route route = new Route(
+                driver,
+                vehicle,
+                trailer,
+                OffsetDateTime.parse("2026-10-15T08:00:00Z"),
+                OffsetDateTime.parse("2026-10-15T14:00:00Z"),
+                120_000L,
+                21_600L,
+                3_600L
+        );
+        route.addStop(new RouteStop(goods, RouteStopType.PICKUP, 1));
+        route.addStop(new RouteStop(goods, RouteStopType.DELIVERY, 2));
+        setId(route, 8L);
+        when(routeRepository.findById(8L)).thenReturn(Optional.of(route));
+        when(routeRepository.findByIdForUpdate(8L)).thenReturn(Optional.of(route));
+        when(driverRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(driver));
+        when(vehicleRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(vehicle));
+        when(trailerRepository.findByIdForUpdate(4L)).thenReturn(Optional.of(trailer));
+        when(goodsRepository.findAllByIdForUpdate(List.of(3L))).thenReturn(List.of(goods));
+        when(routeRepository.saveAndFlush(any(Route.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        routeService.updateStatus(8L, new RouteStatusRequest(RouteStatus.ACTIVE));
+
+        var lockOrder = inOrder(driverRepository, vehicleRepository, trailerRepository, goodsRepository, routeRepository);
+        lockOrder.verify(driverRepository).findByIdForUpdate(1L);
+        lockOrder.verify(vehicleRepository).findByIdForUpdate(2L);
+        lockOrder.verify(trailerRepository).findByIdForUpdate(4L);
+        lockOrder.verify(goodsRepository).findAllByIdForUpdate(List.of(3L));
+        lockOrder.verify(routeRepository).findByIdForUpdate(8L);
+        lockOrder.verify(driverRepository).findByIdForUpdate(1L);
+        lockOrder.verify(vehicleRepository).findByIdForUpdate(2L);
+        lockOrder.verify(trailerRepository).findByIdForUpdate(4L);
+        lockOrder.verify(goodsRepository).findAllByIdForUpdate(List.of(3L));
     }
 
     @Test

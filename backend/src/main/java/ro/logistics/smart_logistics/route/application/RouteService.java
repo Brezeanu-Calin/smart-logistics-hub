@@ -837,10 +837,10 @@ public class RouteService {
         Route observed = findRoute(id);
         lockDriver(observed.getDriver().getId());
         lockVehicle(observed.getVehicle().getId());
-        lockRouteGoods(observed);
         if (observed.getTrailer() != null) {
             lockTrailer(observed.getTrailer().getId());
         }
+        lockRouteGoods(observed);
         Route locked = findRouteForUpdate(id);
         entityManager.refresh(locked, LockModeType.PESSIMISTIC_WRITE);
         return locked;

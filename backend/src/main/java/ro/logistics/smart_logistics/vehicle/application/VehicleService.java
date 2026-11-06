@@ -80,6 +80,7 @@ public class VehicleService {
                 request.transmissionType()
         );
         Vehicle saved = saveEntity(vehicle, licensePlate);
+        maintenanceService.initializeHealth(saved);
         maintenanceService.updateAutomaticMaintenanceState(saved, OffsetDateTime.now());
         return toResponse(vehicleRepository.saveAndFlush(saved));
     }

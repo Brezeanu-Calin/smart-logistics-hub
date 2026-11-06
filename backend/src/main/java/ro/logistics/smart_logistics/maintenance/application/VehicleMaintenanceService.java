@@ -81,6 +81,20 @@ public class VehicleMaintenanceService {
         return vehicleRepository.saveAndFlush(vehicle);
     }
 
+    public void initializeHealth(Vehicle vehicle) {
+        OffsetDateTime performedAt = OffsetDateTime.now();
+        operationRepository.saveAll(VehicleMaintenanceCatalog.forVehicle(vehicle).stream()
+                .filter(VehicleMaintenanceCatalog.Definition::hasHealthInterval)
+                .map(definition -> new VehicleMaintenanceOperation(
+                        vehicle,
+                        definition.key(),
+                        performedAt,
+                        vehicle.getCurrentMileageKm(),
+                        null
+                ))
+                .toList());
+    }
+
     public void completeMaintenance(Vehicle vehicle) {
         if (vehicle.getStatus() == VehicleStatus.IN_TRANSIT
                 || routeRepository.existsByVehicle_IdAndStatusIn(vehicle.getId(), SCHEDULED_ROUTE_STATUSES)) {

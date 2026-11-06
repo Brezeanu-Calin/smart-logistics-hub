@@ -48,6 +48,7 @@ class VehicleServiceTest {
         assertEquals("B 123 ABC", response.licensePlate());
         assertEquals(VehicleType.RIGID_TRUCK, response.vehicleType());
         assertEquals(VehicleStatus.AVAILABLE, response.status());
+        verify(maintenanceService).initializeHealth(any(Vehicle.class));
     }
 
     @Test
