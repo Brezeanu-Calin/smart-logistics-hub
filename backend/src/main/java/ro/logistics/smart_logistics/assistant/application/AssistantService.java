@@ -207,28 +207,101 @@ public class AssistantService {
         if (content == null || !content.isTextual() || content.asText().isBlank()) {
             throw new AssistantUnavailableException("Ollama returned an empty or malformed response.");
         }
-        ModelReply reply;
+        AssistantChatResponse parsed;
         try {
-            reply = objectMapper.readValue(content.asText(), ModelReply.class);
-        } catch (JacksonException exception) {
+            parsed = parseReply(content.asText(), objectMapper);
+        } catch (JacksonException | IllegalArgumentException exception) {
             throw new AssistantUnavailableException("Ollama returned an invalid assistant response.", exception);
         }
-        if (reply.message() == null || reply.message().isBlank()) {
-            throw new AssistantUnavailableException("Ollama returned no assistant message.");
-        }
-        AssistantAction action = reply.action();
+        AssistantAction action = parsed.action();
         if (action != null && (action.type() == null || !ALLOWED_ACTION_TYPES.contains(action.type())
                 || action.summary() == null || action.summary().isBlank()
                 || action.payload() == null || !action.payload().isObject())) {
             throw new AssistantUnavailableException("Ollama returned an unsupported or incomplete action.");
         }
-        return new AssistantChatResponse(reply.message(), action);
+        return parsed;
+    }
+
+    static AssistantChatResponse parseReply(String content, ObjectMapper objectMapper) throws JacksonException {
+        JsonNode root;
+        try {
+            root = objectMapper.readTree(content);
+        } catch (JacksonException exception) {
+            root = objectMapper.readTree(extractJsonObject(content));
+        }
+        if (root != null && root.isTextual()) {
+            root = objectMapper.readTree(root.asText());
+        }
+        if (root == null || !root.isObject()) {
+            throw new IllegalArgumentException("The response must be a JSON object.");
+        }
+
+        JsonNode messageNode = root.get("message");
+        if (messageNode == null || !messageNode.isTextual() || messageNode.asText().isBlank()) {
+            throw new IllegalArgumentException("The response must contain a non-empty message.");
+        }
+
+        JsonNode actionNode = root.get("action");
+        AssistantAction action = null;
+        if (actionNode != null && !actionNode.isNull()) {
+            if (!actionNode.isObject()) {
+                throw new IllegalArgumentException("The response action must be an object or null.");
+            }
+            JsonNode typeNode = actionNode.get("type");
+            JsonNode summaryNode = actionNode.get("summary");
+            JsonNode idNode = actionNode.get("id");
+            JsonNode payloadNode = actionNode.get("payload");
+            if (typeNode == null || !typeNode.isTextual()
+                    || summaryNode == null || !summaryNode.isTextual()
+                    || idNode == null || (!idNode.isNull()
+                    && (!idNode.isIntegralNumber() || !idNode.canConvertToLong()))
+                    || payloadNode == null || !payloadNode.isObject()) {
+                throw new IllegalArgumentException("The response action has invalid fields.");
+            }
+            Long id = idNode.isNull() ? null : idNode.longValue();
+            action = new AssistantAction(typeNode.asText(), summaryNode.asText(), id, payloadNode);
+        }
+        return new AssistantChatResponse(messageNode.asText(), action);
+    }
+
+    private static String extractJsonObject(String content) {
+        String candidate = content.trim();
+        if (candidate.startsWith("```")) {
+            int firstLineBreak = candidate.indexOf('\n');
+            int closingFence = candidate.lastIndexOf("```");
+            if (firstLineBreak >= 0 && closingFence > firstLineBreak) {
+                candidate = candidate.substring(firstLineBreak + 1, closingFence).trim();
+            }
+        }
+        int start = candidate.indexOf('{');
+        if (start < 0) {
+            return candidate;
+        }
+        boolean inString = false;
+        boolean escaped = false;
+        int depth = 0;
+        for (int index = start; index < candidate.length(); index++) {
+            char character = candidate.charAt(index);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (character == '\\') {
+                    escaped = true;
+                } else if (character == '"') {
+                    inString = false;
+                }
+            } else if (character == '"') {
+                inString = true;
+            } else if (character == '{') {
+                depth++;
+            } else if (character == '}' && --depth == 0) {
+                return candidate.substring(start, index + 1);
+            }
+        }
+        return candidate;
     }
 
     private static java.util.Map<String, String> message(String role, String content) {
         return java.util.Map.of("role", role, "content", content);
-    }
-
-    private record ModelReply(String message, AssistantAction action) {
     }
 }
